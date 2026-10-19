@@ -1,17 +1,28 @@
 // Turns detected beats/hits into the marker list the user exports.
+import { sectionAt } from './structure.js';
 
-export const DENSITY = {
+export const PACING = {
   beat: 'Every beat',
   half: 'Every 2nd beat',
-  bar: 'Every bar (downbeats)',
+  bar: 'Every bar',
   bar2: 'Every 2 bars',
   bar4: 'Every 4 bars',
+  bar8: 'Every 8 bars (phrase)',
 };
+export const DENSITY = { ...PACING, auto: 'Auto: follow the song’s energy' };
+export const AUTO_DEFAULT = { low: 'bar2', mid: 'bar', high: 'half' };
 
 const mod = (a, n) => ((a % n) + n) % n;
+const BAR_STEP = { bar: 1, bar2: 2, bar4: 4, bar8: 8 };
+
+function keep(density, rel, isDown, bar) {
+  if (density === 'beat') return true;
+  if (density === 'half') return mod(rel, 2) === 0;
+  return isDown && mod(bar - 1, BAR_STEP[density]) === 0;
+}
 
 // beats: seconds. phase: index of the first downbeat within the bar cycle.
-export function buildMarkers({ mode, beats, onsets, phase = 0, beatsPerBar = 4, density = 'beat', offset = 0, edits }) {
+export function buildMarkers({ mode, beats, onsets, phase = 0, beatsPerBar = 4, density = 'beat', offset = 0, edits, sections, autoMap = AUTO_DEFAULT }) {
   let list = [];
   if (mode === 'hits') {
     list = onsets.map((t, i) => ({ time: t, kind: 'hit', label: `Hit ${i + 1}` }));
@@ -21,13 +32,8 @@ export function buildMarkers({ mode, beats, onsets, phase = 0, beatsPerBar = 4, 
       const beatInBar = mod(rel, beatsPerBar) + 1;
       const bar = Math.floor(rel / beatsPerBar) + 1;
       const isDown = beatInBar === 1;
-      const keep =
-        density === 'beat' ||
-        (density === 'half' && mod(rel, 2) === 0) ||
-        (density === 'bar' && isDown) ||
-        (density === 'bar2' && isDown && mod(bar - 1, 2) === 0) ||
-        (density === 'bar4' && isDown && mod(bar - 1, 4) === 0);
-      if (!keep) return;
+      const d = density === 'auto' ? autoMap[sections?.length ? sectionAt(sections, t).level : 'mid'] : density;
+      if (!keep(d, rel, isDown, bar)) return;
       list.push({
         time: t,
         kind: isDown ? 'downbeat' : 'beat',

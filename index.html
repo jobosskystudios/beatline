@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Beatline – Beat markers for Final Cut Pro</title>
-  <meta name="description" content="Detect beats in a song and export Final Cut Pro markers (FCPXML) for beat-synced rough cuts. Runs entirely in your browser.">
+  <title>Beatline</title>
+  <meta name="description" content="Detect beats, song sections and a cut plan, then export Final Cut Pro markers or a pre-cut timeline (FCPXML). Runs entirely in your browser.">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -20,7 +20,7 @@
   </header>
 
   <main class="app">
-    <section>
+    <section class="main-col">
       <div class="panel">
         <label class="drop" id="drop">
           <input type="file" id="file" accept="audio/*,.wav,.aif,.aiff,.mp3,.m4a,.aac,.flac" hidden>
@@ -30,31 +30,76 @@
 
         <div class="stats">
           <div class="stat"><b id="sBpm">–</b><span>BPM</span></div>
-          <div class="stat"><b id="sBeats">–</b><span>beats found</span></div>
-          <div class="stat"><b id="sMarkers">–</b><span>markers to export</span></div>
-          <div class="stat"><b id="sDur">–</b><span>duration</span></div>
+          <div class="stat accent"><b id="sCuts">–</b><span>total cuts</span></div>
+          <div class="stat"><b id="sShots">–</b><span>shots to fill</span></div>
+          <div class="stat"><b id="sAsl">–</b><span>avg shot</span></div>
+          <div class="stat"><b id="sCpm">–</b><span>cuts / min</span></div>
+          <div class="stat"><b id="sLen">–</b><span id="sLenLabel">length</span></div>
         </div>
 
         <div class="wave-wrap">
-          <canvas id="wave" aria-label="Waveform with beat markers"></canvas>
-          <div class="wave-empty" id="waveEmpty">Waveform and markers appear here</div>
+          <canvas id="wave" aria-label="Waveform with song sections and cut markers"></canvas>
+          <div class="wave-empty" id="waveEmpty">Waveform, sections and cuts appear here</div>
         </div>
 
         <div class="transport">
           <button id="play" disabled title="Play / pause (Space)">▶ Play</button>
-          <button id="clickToggle" aria-pressed="false" disabled title="Metronome click on every marker">🔔 Click</button>
+          <button id="clickToggle" aria-pressed="false" disabled title="Metronome click on every cut">🔔 Click</button>
           <span class="time" id="time">00:00.00</span>
           <button id="zoomOut" disabled title="Zoom out (−)">−</button>
           <button id="zoomFit" disabled title="Show whole song">Fit</button>
           <button id="zoomIn" disabled title="Zoom in (+)">+</button>
         </div>
         <div class="legend">
-          <span><i style="background:var(--downbeat)"></i>Downbeat (bar start)</span>
+          <span><i style="background:var(--downbeat)"></i>Bar start</span>
           <span><i style="background:var(--beat)"></i>Beat</span>
           <span><i style="background:var(--hit)"></i>Hit</span>
           <span><i style="background:var(--manual)"></i>Added by you</span>
+          <span><i style="background:var(--lvl-low)"></i>Calm</span>
+          <span><i style="background:var(--lvl-mid)"></i>Groove</span>
+          <span><i style="background:var(--lvl-high)"></i>Peak / drop</span>
         </div>
-        <p class="hint">Click the waveform to seek. <kbd>Shift</kbd>+click adds or removes a marker. <kbd>M</kbd> adds a marker at the playhead, <kbd>Space</kbd> plays. Scroll to pan, <kbd>Ctrl</kbd>/pinch to zoom.</p>
+        <p class="hint">Click to seek · <kbd>Shift</kbd>+click adds/removes a cut · <kbd>M</kbd> cut at playhead · <kbd>I</kbd>/<kbd>O</kbd> set range · <kbd>X</kbd> clear range · <kbd>T</kbd> tap tempo · <kbd>Space</kbd> play · scroll pans, <kbd>Ctrl</kbd>/pinch zooms</p>
+      </div>
+
+      <div class="panel" id="planPanel" hidden>
+        <div class="plan-head">
+          <h2>Cut plan</h2>
+          <div class="range-ctl">
+            <span id="rangeLabel" class="range-label">Whole song</span>
+            <button id="setIn" title="Range starts at the playhead (I)">Set in</button>
+            <button id="setOut" title="Range ends at the playhead (O)">Set out</button>
+            <button id="clearRange" title="Use the whole song (X)">Whole song</button>
+          </div>
+        </div>
+        <div class="fit-row">
+          <span>Quick range:</span>
+          <button data-fit="15">15 s</button>
+          <button data-fit="30">30 s</button>
+          <button data-fit="60">60 s</button>
+          <button data-fit="90">90 s</button>
+          <span class="note-inline">Starts at the playhead, ends on the nearest bar line.</span>
+        </div>
+        <div class="table-scroll">
+          <table class="data" id="sectionTable">
+            <thead><tr><th>#</th><th>Section</th><th>Starts</th><th>Bars</th><th>Energy</th><th>Cuts</th><th>Avg shot</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="hint" id="planNote"></p>
+        <details id="shotDetails">
+          <summary id="shotSummary">Shot list</summary>
+          <div class="table-scroll shots">
+            <table class="data" id="shotTable">
+              <thead><tr><th>Shot</th><th>Timeline in</th><th>Length</th><th>Frames</th><th>Section</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </details>
+        <div class="plan-actions">
+          <button id="exportShots" disabled>Download shot list (.csv)</button>
+          <button id="exportCsv" disabled>Download marker list (.csv)</button>
+        </div>
       </div>
     </section>
 
@@ -62,38 +107,45 @@
       <div class="panel">
         <h2>Detect</h2>
         <div class="field">
-          <span>Mark</span>
+          <span>Cut on</span>
           <div class="seg" id="mode">
             <button data-v="beats" aria-pressed="true">Beat grid</button>
             <button data-v="hits" aria-pressed="false">Hits</button>
           </div>
         </div>
 
-        <div data-for="beats">
-          <div class="field">
-            <span>Tempo (BPM) — leave blank for auto</span>
-            <div class="inline">
-              <input type="number" id="bpm" min="30" max="300" step="0.01" placeholder="auto">
-              <button id="half" title="Halve tempo">½×</button>
-              <button id="double" title="Double tempo">2×</button>
-            </div>
+        <div class="field">
+          <span>Tempo (BPM) · blank = auto</span>
+          <div class="inline">
+            <input type="number" id="bpm" min="30" max="300" step="0.01" placeholder="auto">
+            <button id="tap" title="Tap along to set the tempo (T)">Tap</button>
+            <button id="half" title="Halve tempo">½×</button>
+            <button id="double" title="Double tempo">2×</button>
           </div>
+        </div>
+
+        <div data-for="beats">
           <div class="field">
             <span>Grid strictness <output id="tightOut"></output></span>
             <input type="range" id="tight" min="1" max="10" step="1" value="6">
           </div>
-          <p class="note">Higher keeps an even grid; lower lets markers follow a drifting (live) tempo.</p>
+          <p class="note">High for click-tracked pop and EDM; low for live bands that drift.</p>
           <div class="row">
             <label class="field"><span>Beats per bar</span>
               <select id="bpb"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option><option>7</option></select>
             </label>
-            <div class="field"><span>Downbeat</span>
+            <div class="field"><span>Bar start</span>
               <div class="inline"><button id="phaseL" title="Move bar start one beat earlier">◀</button><button id="phaseR" title="Move bar start one beat later">▶</button></div>
             </div>
           </div>
-          <label class="field"><span>Markers</span>
+          <label class="field"><span>Cut pacing</span>
             <select id="density"></select>
           </label>
+          <div class="auto-map" data-for-density="auto">
+            <label class="field"><span><i class="dot" style="background:var(--lvl-low)"></i>Calm parts</span><select id="autoLow" class="pace"></select></label>
+            <label class="field"><span><i class="dot" style="background:var(--lvl-mid)"></i>Groove parts</span><select id="autoMid" class="pace"></select></label>
+            <label class="field"><span><i class="dot" style="background:var(--lvl-high)"></i>Peaks &amp; drop</span><select id="autoHigh" class="pace"></select></label>
+          </div>
         </div>
 
         <div data-for="hits" hidden>
@@ -101,17 +153,41 @@
             <span>Sensitivity <output id="sensOut"></output></span>
             <input type="range" id="sens" min="0" max="1" step="0.05" value="0.5">
           </div>
-          <p class="note">Hits are individual transients (drums, plucks, stabs) — handy for accent cuts.</p>
+          <p class="note">Hits are single transients (drums, plucks, stabs), good for accent cuts.</p>
         </div>
 
-        <label class="field"><span>Nudge all markers (ms)</span>
-          <input type="number" id="offset" step="5" value="0">
-        </label>
-        <button id="resetEdits" class="wide" disabled>Undo my marker edits</button>
+        <div class="row">
+          <label class="field"><span>Shortest shot (s)</span>
+            <input type="number" id="minShot" min="0" max="10" step="0.1" value="0.5">
+          </label>
+          <label class="field"><span>Nudge cuts (ms)</span>
+            <input type="number" id="offset" step="5" value="0">
+          </label>
+        </div>
+        <button id="resetEdits" class="wide" disabled>Undo my cut edits</button>
       </div>
 
       <div class="panel">
         <h2>Export to Final Cut Pro</h2>
+        <div class="field">
+          <span>Export as</span>
+          <div class="seg seg3" id="target">
+            <button data-v="clip" aria-pressed="true">Song + markers</button>
+            <button data-v="blocked" aria-pressed="false">Pre-cut timeline</button>
+            <button data-v="gap" aria-pressed="false">Markers only</button>
+          </div>
+        </div>
+        <p class="note" data-for="clip">The song in a new project with every cut as a marker.</p>
+        <p class="note" data-for="blocked" hidden>One placeholder per shot, song connected underneath. Replace each placeholder with footage: the cut is already timed.</p>
+        <p class="note" data-for="gap" hidden>A gap clip carrying the markers. Put your song under it.</p>
+
+        <div data-for="clip blocked">
+          <label class="field"><span>Folder the song is in on your Mac</span>
+            <input type="text" id="folder" placeholder="/Users/you/Music" spellcheck="false">
+          </label>
+          <p class="note">Finder: select the folder, hold <kbd>⌥</kbd>, right-click → <em>Copy … as Pathname</em>.</p>
+        </div>
+
         <div class="row">
           <label class="field"><span>Frame rate</span>
             <select id="fps"></select>
@@ -120,26 +196,12 @@
             <select id="rounding"><option value="nearest">Nearest</option><option value="previous">Previous</option><option value="next">Next</option></select>
           </label>
         </div>
-        <label class="field"><span>Downbeat markers</span><select id="styleDown" class="style"></select></label>
-        <label class="field"><span>Beat &amp; hit markers</span><select id="styleBeat" class="style"></select></label>
-
-        <div class="field">
-          <span>Export as</span>
-          <div class="seg" id="target">
-            <button data-v="clip" aria-pressed="true">Song + markers</button>
-            <button data-v="gap" aria-pressed="false">Markers only</button>
-          </div>
-        </div>
-        <div data-for="clip">
-          <label class="field"><span>Folder the song is in on your Mac</span>
-            <input type="text" id="folder" placeholder="/Users/you/Music" spellcheck="false">
-          </label>
-          <p class="note">Finder: select the folder, hold <kbd>⌥</kbd>, right-click → <em>Copy … as Pathname</em>. If it’s wrong, use <em>File › Relink Files</em> in FCP.</p>
-        </div>
-        <p class="note" data-for="gap" hidden>Creates a gap clip carrying the markers. Put your song under it and snap to them.</p>
 
         <details>
-          <summary>More export options</summary>
+          <summary>Marker colours &amp; project options</summary>
+          <label class="field"><span>Section markers</span><select id="styleSection" class="style"></select></label>
+          <label class="field"><span>Bar-start markers</span><select id="styleDown" class="style"></select></label>
+          <label class="field"><span>Beat &amp; hit markers</span><select id="styleBeat" class="style"></select></label>
           <div class="row">
             <label class="field"><span>Project format</span>
               <select id="res"><option value="1080p">1080p HD</option><option value="4k">4K UHD</option><option value="720p">720p</option><option value="vertical">Vertical 1080×1920</option><option value="square">Square 1080×1080</option></select>
@@ -152,7 +214,6 @@
         </details>
 
         <button id="exportXml" class="primary wide" disabled>Download .fcpxml</button>
-        <button id="exportCsv" class="wide" disabled style="margin-top:8px">Download marker list (.csv)</button>
         <details id="xmlBox" hidden>
           <summary>Download didn’t start? Copy the file instead</summary>
           <textarea id="xmlText" rows="8" readonly spellcheck="false"></textarea>
@@ -163,7 +224,7 @@
     </aside>
   </main>
 
-  <footer class="site-footer">Beatline runs entirely in your browser — your audio never leaves your computer.</footer>
+  <footer class="site-footer">Beatline runs entirely in your browser. Your audio never leaves your computer.</footer>
   <div class="toast" id="toast" role="status"></div>
   <script type="module" src="js/app.js"></script>
 </body>

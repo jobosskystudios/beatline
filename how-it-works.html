@@ -38,6 +38,12 @@
     <h2>5. Downbeats</h2>
     <p>For each possible bar alignment, Beatline averages the bass-band energy on the beats that would be “beat 1”. The alignment with the most kick wins. Wrong guess? Shift it with the <em>◀ ▶</em> buttons.</p>
 
+    <h2>Sections and the drop</h2>
+    <p>Beatline measures the loudness (RMS) of every bar, smooths it, and sorts bars into three energy levels relative to the song’s own range: calm, groove and peak. Neighbouring bars at the same level become a section; sections shorter than two bars are merged into a neighbour. The biggest jump up into a peak section is labelled the drop. A calm first or last section is called the intro or outro.</p>
+
+    <h2>Cut plan</h2>
+    <p>Every exported marker inside the range is a cut. Cuts are snapped to frames, duplicates merged, and any cut that would leave a shot shorter than the <em>shortest shot</em> setting is skipped. Shots are the spans between cuts. Average shot length is range length ÷ shots; cuts per minute is cuts ÷ range length in minutes. Auto pacing picks a cut density per section from its energy level.</p>
+
     <h2>6. Hits</h2>
     <p>In <em>Hits</em> mode, Beatline skips the grid and marks individual peaks in the onset envelope that rise clearly above their surroundings, at least 80 ms apart. <em>Sensitivity</em> lowers or raises that bar.</p>
 

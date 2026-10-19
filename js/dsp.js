@@ -229,7 +229,8 @@ export function trackBeats(env, hopTime, bpm, tightness = 100) {
   // Trim weak beats at the edges (silence before/after the music).
   let sq = 0;
   for (const v of local) sq += v * v;
-  const thr = 0.5 * Math.sqrt(sq / n);
+  // Low enough that quiet intros and outros keep their beats.
+  const thr = 0.35 * Math.sqrt(sq / n);
   let s = 0;
   let e = beats.length;
   while (s < e && local[beats[s]] < thr) s++;

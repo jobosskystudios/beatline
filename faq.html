@@ -38,7 +38,13 @@
     <p>The path you typed doesn’t match where the song is. Select the clip and choose <strong>File › Relink Files…</strong>, or re-export with the correct folder. Spaces and special characters in names are fine.</p>
 
     <h2>Final Cut won’t import the file.</h2>
-    <p>Pick an older FCPXML version under <em>More export options</em> (1.9 works with Final Cut Pro 10.5 and later). If it still fails, please open an issue with the FCP version and the error text.</p>
+    <p>Pick an older FCPXML version under <em>Marker colours &amp; project options</em> (1.9 works with Final Cut Pro 10.5 and later). If it still fails, please open an issue with the FCP version and the error text.</p>
+
+    <h2>How is “total cuts” counted?</h2>
+    <p>Every marker inside your range that survives the shortest-shot limit is one cut. Shots = cuts + 1. Change the pacing, range or shortest shot and the numbers update straight away.</p>
+
+    <h2>The sections look wrong.</h2>
+    <p>Sections come from loudness only, so a quiet chorus or a loud verse can be classed differently than you’d label it. Use them as a pacing guide; the beat grid and markers don’t depend on them except in Auto pacing.</p>
 
     <h2>Which frame rate should I choose?</h2>
     <p>The frame rate of the Final Cut project you’ll cut in — check it in the project’s Inspector (<em>Modify › Project Properties</em>). Markers are snapped to that rate’s frames.</p>

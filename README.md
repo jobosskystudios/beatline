@@ -14,6 +14,13 @@ Everything runs in the browser — no install, no upload, no dependencies.
 
 ## Features
 
+- **Cut plan:** total cuts, shots to fill, average shot length, cuts per minute, per-section breakdown and a shot list (CSV)
+- **Song sections:** calm / groove / peak energy per bar, drop detection, section chapter markers
+- **Auto pacing:** slower cuts in calm parts, faster in peaks (pace per energy level is configurable)
+- **Range:** In/Out or quick 15/30/60/90 s ranges snapped to bar lines, for cut-downs
+- **Pre-cut timeline export:** one placeholder per shot with the song connected below, ready for Replace from Start
+- Tap tempo, shortest-shot limit, every-8-bars (phrase) pacing
+
 - Automatic tempo + beat grid (spectral flux → autocorrelation → dynamic-programming beat tracker)
 - Downbeat detection (bass-weighted), bar-aware labels (`Bar 12 · Beat 3`), 2–7 beats per bar
 - Marker density: every beat, every 2nd beat, every bar, every 2 or 4 bars
@@ -22,7 +29,7 @@ Everything runs in the browser — no install, no upload, no dependencies.
 - Edit markers by hand (Shift+click, `M` while playing) and audition with a metronome click
 - Frame-exact export at 23.976, 24, 25, 29.97, 30, 50, 59.94, 60 fps with nearest/previous/next snapping
 - Marker styles: standard, to-do, completed, chapter — chosen separately for downbeats and beats
-- Export the song clip with markers, or a markers-only gap clip; FCPXML 1.9 / 1.10 / 1.11
+- Export the song clip with markers, a pre-cut timeline, or a markers-only gap clip; FCPXML 1.9 / 1.10 / 1.11
 - CSV marker list (seconds, frame, timecode) for other editors
 
 ## Run it
@@ -48,7 +55,9 @@ The tests generate synthetic drum loops (90–150 BPM) and check tempo, beat pos
 ```
 index.html, guide.html, how-it-works.html, faq.html, styles.css, icon.svg
 js/dsp.js       beat analysis (pure functions, no DOM)
-js/markers.js   beats → marker list (density, bars, user edits)
+js/markers.js   beats → marker list (pacing, bars, user edits)
+js/structure.js bars, energy sections, drop
+js/cutplan.js   cuts, shots and stats for a range
 js/fcpxml.js    FCPXML + CSV writers
 js/app.js       UI: loading, waveform, playback, export
 tests/          node:test suites

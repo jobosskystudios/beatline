@@ -50,6 +50,15 @@
 
     <div class="callout">Getting the folder path: in Finder select the folder, hold <kbd>⌥ Option</kbd>, right-click, and choose <em>Copy “…” as Pathname</em>. Paste it into Beatline — it’s remembered for next time.</div>
 
+    <h2>Plan the cut before you export</h2>
+    <p>The numbers above the waveform are your cut plan: <strong>total cuts</strong>, <strong>shots to fill</strong>, <strong>average shot length</strong> and <strong>cuts per minute</strong>. The coloured band shows the song’s sections: calm, groove, peak, and the drop.</p>
+    <ul>
+      <li><strong>Auto pacing:</strong> set <em>Cut pacing</em> to <em>Auto</em> to cut slower in calm parts and faster in peaks. Choose the pace for each kind of section.</li>
+      <li><strong>Shortest shot:</strong> cuts that would leave a shot shorter than this are skipped, shown faded on the waveform.</li>
+      <li><strong>Range:</strong> press <kbd>I</kbd> and <kbd>O</kbd> at the playhead, or use <em>Quick range</em> (15/30/60/90 s), to plan a cut-down from part of the song. Ranges snap to bar lines so the music edit lands on the grid.</li>
+      <li><strong>Shot list:</strong> download it as CSV to plan footage: shot number, timeline in/out, length, frames and section.</li>
+    </ul>
+
     <h2>2. Bring it into Final Cut Pro</h2>
     <ol class="steps">
       <li><strong>File › Import › XML…</strong> and choose the downloaded <code>.fcpxml</code> (or just drag it onto the FCP window).</li>
@@ -66,6 +75,9 @@
       <li><strong>Faster rough version:</strong> lay down your selects end to end, then trim each edit point to the nearest marker — with snapping on they click into place.</li>
       <li>Open the Timeline Index (<kbd>⇧⌘2</kbd> → <em>Tags</em>) to see and jump to every marker by name (“Bar 12”, “Bar 12 · Beat 3”…).</li>
     </ol>
+
+    <h2>Pre-cut timeline export</h2>
+    <p>Choose <em>Pre-cut timeline</em> to get a project where every shot is already a placeholder of the right length, with the song connected underneath. Drag a clip from the browser onto a placeholder and choose <strong>Replace from Start</strong>: the clip takes the placeholder’s exact length, so every cut stays on the beat. Work left to right and the rough cut builds itself.</p>
 
     <h2>Markers-only export</h2>
     <p>Prefer not to type a folder path? Choose <em>Markers only</em>. The project then contains a gap clip carrying the markers. Drag your song under it as a connected clip starting at 0, and snap your edits to the gap’s markers.</p>
