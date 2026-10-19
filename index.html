@@ -153,6 +153,12 @@
 
         <button id="exportXml" class="primary wide" disabled>Download .fcpxml</button>
         <button id="exportCsv" class="wide" disabled style="margin-top:8px">Download marker list (.csv)</button>
+        <details id="xmlBox" hidden>
+          <summary>Download didn’t start? Copy the file instead</summary>
+          <textarea id="xmlText" rows="8" readonly spellcheck="false"></textarea>
+          <button id="copyXml" class="wide">Copy FCPXML</button>
+          <p class="note">Paste into TextEdit, choose Format › Make Plain Text, and save as <code>Song.fcpxml</code>.</p>
+        </details>
       </div>
     </aside>
   </main>

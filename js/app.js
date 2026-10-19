@@ -85,6 +85,15 @@ function initControls() {
   });
   $('exportXml').addEventListener('click', exportXml);
   $('exportCsv').addEventListener('click', exportCsv);
+  $('copyXml').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText($('xmlText').value);
+      toast('Copied FCPXML');
+    } catch {
+      $('xmlText').select();
+      toast('Press ⌘C to copy');
+    }
+  });
 }
 
 function setupSeg(id) {
@@ -281,6 +290,8 @@ function exportXml() {
     projectName: `${name} – ${s.mode === 'hits' ? 'hits' : 'beats'}`,
   });
   download(`${name}.fcpxml`, xml, 'application/xml');
+  $('xmlText').value = xml;
+  $('xmlBox').hidden = false;
   toast('Saved. In Final Cut Pro: File › Import › XML…');
 }
 
