@@ -1,3 +1,5 @@
 .DS_Store
 node_modules/
 *.fcpxml
+tools/eval/audio/
+tools/eval/ref_librosa.json

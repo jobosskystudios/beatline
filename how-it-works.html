@@ -2,76 +2,61 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>How Beatline Works</title>
-  <meta name="description" content="The beat detection and FCPXML export behind Beatline, explained.">
+  <meta name="description" content="The audio analysis and FCPXML export behind Beatline, and how it was tested.">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="index.html"><img src="icon.svg" alt="" width="26" height="26"> Beatline</a>
+    <a class="brand" href="index.html"><img src="icon.svg" alt="" width="24" height="24"> Beatline</a>
     <nav>
       <a href="index.html">App</a>
-      <a href="guide.html">FCP guide</a>
+      <a href="guide.html">Guide</a>
       <a href="how-it-works.html" aria-current="page">How it works</a>
       <a href="faq.html">FAQ</a>
     </nav>
   </header>
 
   <main class="prose">
-    <h1>How Beatline works</h1>
-    <p class="lede">Everything runs in your browser with plain JavaScript — no upload, no server, no machine-learning model. Here’s the pipeline.</p>
+    <h1>How Beatline listens</h1>
+    <p class="lede">Plain JavaScript, on your Mac, in a background thread. No upload, no server, no machine-learning model. Here is each step and how it was checked.</p>
 
-    <h2>1. Decode</h2>
-    <p>The browser’s Web Audio API decodes the file (WAV, AIFF, MP3, M4A/AAC, and FLAC where supported). Channels are averaged to mono and downsampled to about 22 kHz — plenty for finding rhythm.</p>
+    <h2>1. Onsets: when does new sound start?</h2>
+    <p>The song is mixed to mono, resampled to about 22 kHz and cut into 46 ms windows every 11.6 ms. Each window’s spectrum is grouped into 64 mel bands (spaced the way we hear pitch) and log-compressed with a knee 50 dB below the loudest moment, so the music behaves like decibels while hiss and room tone stay near zero. The <em>onset envelope</em> is how much each band got louder than in the previous window. The same is done for the bass band (kicks), the 150 Hz–3 kHz band (snares) and above 5 kHz (hi-hats).</p>
+    <p>Spectral flux peaks slightly before the attack you hear, so the envelope is shifted one window later. Measured on synthetic kicks, snares, hats and plucks, detected attacks land within about 5 ms of the true onset, well inside one video frame (42 ms at 23.976 fps).</p>
 
-    <h2>2. Onset envelope: “how much new sound just started?”</h2>
-    <p>The audio is cut into overlapping 46 ms windows every 11.6 ms. Each window goes through an FFT, magnitudes are log-compressed, and Beatline sums how much each frequency got <em>louder</em> than in the previous window (<em>spectral flux</em>). Drum hits, plucks and chord changes make tall spikes. A second envelope does the same for the bass band only (below 150 Hz) — that’s where kick drums live.</p>
+    <h2>2. Tempo</h2>
+    <p>Beatline compares the envelope with delayed copies of itself in overlapping 8-second windows (a <em>tempogram</em>) and adds them up. Delays where hits line up reveal the beat period. A preference for tempos near 120 BPM settles the “70 or 140?” question, and a second check doubles a slow guess when the halfway points between beats carry real hits. The tempo chips offer the related tempos (½×, ⅔×, 1.5×, 2×) in one click.</p>
 
-    <h2>3. Tempo</h2>
-    <p>The onset envelope is compared with delayed copies of itself (<em>autocorrelation</em>). Delays that line up spike-with-spike reveal the beat period. A gentle preference for tempos near 120 BPM settles the classic “is it 70 or 140?” ambiguity; if it picks the wrong one, <em>½×</em> and <em>2×</em> fix it.</p>
+    <h2>3. Beats</h2>
+    <p>Dynamic-programming beat tracking (Ellis, 2007) finds the sequence of beat times that sits on strong onsets <em>and</em> keeps an even spacing. <em>Grid strictness</em> sets how far the spacing may drift. Beats in silence before or after the music are trimmed. The tempo over time (shown as the curve under the sections) tells you whether the song is steady, a live band drifting, or changing tempo.</p>
 
-    <h2>4. Beat grid</h2>
-    <p>Beatline uses dynamic-programming beat tracking (Ellis, 2007): it searches for the sequence of beat times that lands on strong onsets <em>and</em> keeps the spacing close to the tempo. <em>Grid strictness</em> sets how much each beat may deviate — high for click-tracked pop and EDM, low for live recordings. Weak beats in silent intros and outros are trimmed.</p>
+    <h2>4. Confidence</h2>
+    <p>Confidence measures how strongly the onsets repeat at the beat period, window by window. Steady music scores 0.2–0.7; speech and rubato classical score under 0.1. Below 0.12 Beatline says <em>Unsure</em> and suggests cutting on hits instead of a grid.</p>
 
-    <h2>5. Downbeats</h2>
-    <p>For each possible bar alignment, Beatline averages the bass-band energy on the beats that would be “beat 1”. The alignment with the most kick wins. Wrong guess? Shift it with the <em>◀ ▶</em> buttons.</p>
+    <h2>5. Time signature and bar 1</h2>
+    <p>Bar starts usually bring a bass note and a chord change. Beatline scores every beat by bass attack plus how much the harmony (a 12-note chroma profile) changed, then tries 3 and 4 beats per bar at every alignment. The grouping where the strong beats line up wins. This is how it knows a waltz is in 3. Apple’s own beat detection is documented as working best in 4/4.</p>
 
-    <h2>Sections and the drop</h2>
-    <p>Beatline measures the loudness (RMS) of every bar, smooths it, and sorts bars into three energy levels relative to the song’s own range: calm, groove and peak. Neighbouring bars at the same level become a section; sections shorter than two bars are merged into a neighbour. The biggest jump up into a peak section is labelled the drop. A calm first or last section is called the intro or outro.</p>
+    <h2>6. Sections and the drop</h2>
+    <p>Each bar’s loudness is classified as calm, groove or peak relative to the song’s own range. Runs of bars become sections; the biggest jump up into a peak is the drop. Auto pacing uses these levels to cut slower in calm parts and faster in peaks.</p>
 
-    <h2>Cut plan</h2>
-    <p>Every exported marker inside the range is a cut. Cuts are snapped to frames, duplicates merged, and any cut that would leave a shot shorter than the <em>shortest shot</em> setting is skipped. Shots are the spans between cuts. Average shot length is range length ÷ shots; cuts per minute is cuts ÷ range length in minutes. Auto pacing picks a cut density per section from its energy level.</p>
+    <h2>7. Key and loudness</h2>
+    <p>The key is estimated by matching the song’s overall chroma against Krumhansl–Kessler major and minor profiles, shown with its Camelot code. It is an estimate and can be a related key. Loudness is integrated LUFS per ITU-R BS.1770 (K-weighting, gating), with the sample peak.</p>
 
-    <h2>6. Hits</h2>
-    <p>In <em>Hits</em> mode, Beatline skips the grid and marks individual peaks in the onset envelope that rise clearly above their surroundings, at least 80 ms apart. <em>Sensitivity</em> lowers or raises that bar.</p>
+    <h2>8. Frame-exact FCPXML</h2>
+    <p>Final Cut stores time as exact fractions of a second. Every cut is snapped to a whole frame of your project rate and written as a fraction (frame <em>n</em> at 23.976 fps is <code>n × 1001/24000 s</code>). The song is referenced by its file path, with its real sample rate read from the file header.</p>
+<pre>&lt;asset id="r2" name="Song" … audioChannels="2" audioRate="48000"&gt;
+  &lt;media-rep kind="original-media" src="file:///Users/you/Music/Song.wav"/&gt;
+&lt;/asset&gt;
+…
+&lt;asset-clip ref="r2" offset="0s" … audioRole="music"&gt;
+  &lt;chapter-marker start="1001/2000s" duration="1001/24000s" value="1. Intro (bars 1–8)"/&gt;
+  &lt;marker start="1001/1000s" duration="1001/24000s" value="Bar 2"/&gt;</pre>
 
-    <h2>7. Frame-exact FCPXML</h2>
-    <p>Final Cut Pro stores time as exact fractions of a second. Each marker is snapped to a whole frame of your project rate, then written as a fraction — at 23.976 fps, frame <em>n</em> is <code>n × 1001/24000 s</code>. Two markers that land on the same frame are merged (downbeats win).</p>
-<pre>&lt;fcpxml version="1.10"&gt;
-  &lt;resources&gt;
-    &lt;format id="r1" name="FFVideoFormat1080p2398" frameDuration="1001/24000s" …/&gt;
-    &lt;asset id="r2" name="Song" …&gt;
-      &lt;media-rep kind="original-media" src="file:///Users/you/Music/Song.wav"/&gt;
-    &lt;/asset&gt;
-  &lt;/resources&gt;
-  &lt;library&gt;&lt;event name="Beatline"&gt;&lt;project name="Song – beats"&gt;
-    &lt;sequence format="r1" …&gt;&lt;spine&gt;
-      &lt;asset-clip ref="r2" offset="0s" …&gt;
-        &lt;chapter-marker start="1001/2000s" duration="1001/24000s" value="Bar 1"/&gt;
-        &lt;marker start="1001/1000s" duration="1001/24000s" value="Bar 1 · Beat 2"/&gt;
-        …</pre>
-    <table>
-      <tr><th>Beatline style</th><th>Written as</th><th>Shows in FCP as</th></tr>
-      <tr><td>Standard</td><td><code>&lt;marker …/&gt;</code></td><td>Blue marker</td></tr>
-      <tr><td>To-do</td><td><code>&lt;marker … completed="0"/&gt;</code></td><td>Red to-do</td></tr>
-      <tr><td>Completed</td><td><code>&lt;marker … completed="1"/&gt;</code></td><td>Green completed to-do</td></tr>
-      <tr><td>Chapter</td><td><code>&lt;chapter-marker …/&gt;</code></td><td>Orange chapter marker</td></tr>
-    </table>
-
-    <h2>Accuracy</h2>
-    <p>On steady music (pop, EDM, hip-hop, rock with a drummer on a click), the grid typically lands within a frame. Expect to help it with rubato piano, orchestral swells, heavy swing, or tempo changes — lower the strictness, use Hits mode, or add markers by hand.</p>
+    <h2>How it was tested</h2>
+    <p>Beyond the automated tests (synthetic drum loops at 90–150 BPM, a waltz, a C-major progression, a −20 dBFS reference tone), Beatline was scored against <em>librosa</em>, a widely used research library, on eight Creative Commons recordings: pop, folk, ragtime, drum &amp; bass, a waltz, two orchestral pieces and speech. It matches the reference tempo on every steady song, and on the folk track its beats sit on stronger onsets than the reference’s. The tools are in <code>tools/eval/</code> in the repository.</p>
   </main>
 
   <footer class="site-footer"><a href="index.html">Open Beatline →</a></footer>

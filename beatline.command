@@ -50,7 +50,7 @@ if ! command -v python3 >/dev/null; then
   exit 1
 fi
 
-python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$DIR" >/dev/null 2>&1 &
+python3 "$DIR/server.py" "$PORT" >/dev/null 2>&1 &
 SERVER=$!
 trap 'kill $SERVER 2>/dev/null' EXIT INT TERM
 

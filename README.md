@@ -1,36 +1,37 @@
 # Beatline
 
-Detect the beats in a song and export **Final Cut Pro markers (FCPXML)** for fast, beat-synced rough cuts.
-Everything runs in the browser — no install, no upload, no dependencies.
-
-**Pages**
+Beatline **listens to a song first** (tempo, beats, bar starts, time signature, sections, the drop, key, loudness), then **plans the cut** (total cuts, shot list, energy-aware pacing, cut-downs) and **hands Final Cut Pro a project already timed to the music** (markers or a pre-cut timeline, FCPXML).
+Runs on your Mac: no upload, no dependencies beyond Python 3 for the launcher.
 
 | Page | What it is |
 | --- | --- |
-| [`index.html`](index.html) | The app: drop a song, check the beat grid, export `.fcpxml` / `.csv` |
-| [`guide.html`](guide.html) | Step-by-step beat-cut workflow in Final Cut Pro |
-| [`how-it-works.html`](how-it-works.html) | Beat detection and FCPXML export explained |
-| [`faq.html`](faq.html) | Troubleshooting and common questions |
+| [`index.html`](index.html) | The app |
+| [`guide.html`](guide.html) | From song to beat-synced rough cut, step by step |
+| [`how-it-works.html`](how-it-works.html) | The analysis and export, and how they were tested |
+| [`faq.html`](faq.html) | Silent audio in Final Cut, tempo, timing, Final Cut's own beat detection |
+| [`ROADMAP.md`](ROADMAP.md) | Research notes and what's next |
 
 ## Features
 
-- **Cut plan:** total cuts, shots to fill, average shot length, cuts per minute, per-section breakdown and a shot list (CSV)
-- **Song sections:** calm / groove / peak energy per bar, drop detection, section chapter markers
-- **Auto pacing:** slower cuts in calm parts, faster in peaks (pace per energy level is configurable)
-- **Range:** In/Out or quick 15/30/60/90 s ranges snapped to bar lines, for cut-downs
-- **Pre-cut timeline export:** one placeholder per shot with the song connected below, ready for Replace from Start
-- Tap tempo, shortest-shot limit, every-8-bars (phrase) pacing
+**Listen**
+- Tempo from a tempogram with half/double-time check; one-click alternatives (½×, ⅔×, 1.5×, 2×); tap tempo
+- Beat grid (dynamic-programming tracker), timing calibrated to the audible attack (within ~5 ms)
+- Confidence rating (steady / unsure), tempo stability (steady, live drift, tempo changes) and a tempo curve
+- Time signature (3/4 vs 4/4) and bar 1 from bass + harmony; fix with **D** (bar 1 at playhead) and grid nudge
+- Sections (calm / groove / peak) and the drop; key with Camelot code; integrated loudness (LUFS) and peak
+- Drum hits (kick, snare, hi-hat) and any-hit detection
 
-- Automatic tempo + beat grid (spectral flux → autocorrelation → dynamic-programming beat tracker)
-- Downbeat detection (bass-weighted), bar-aware labels (`Bar 12 · Beat 3`), 2–7 beats per bar
-- Marker density: every beat, every 2nd beat, every bar, every 2 or 4 bars
-- **Hits** mode for transient/accent markers with a sensitivity control
-- Manual BPM, ½× / 2×, grid strictness, global nudge in ms
-- Edit markers by hand (Shift+click, `M` while playing) and audition with a metronome click
-- Frame-exact export at 23.976, 24, 25, 29.97, 30, 50, 59.94, 60 fps with nearest/previous/next snapping
-- Marker styles: standard, to-do, completed, chapter — chosen separately for downbeats and beats
-- Export the song clip with markers, a pre-cut timeline, or a markers-only gap clip; FCPXML 1.9 / 1.10 / 1.11
-- CSV marker list (seconds, frame, timecode) for other editors
+**Plan**
+- Cut on the beat grid (every beat … every 8 bars, or **auto** by section energy), on drums, or on any hit
+- Total cuts, shots to fill, average shot length, cuts per minute, per-section breakdown, shot list CSV
+- Ranges for cut-downs (drag the ruler, I/O, or 6/15/30/60/90 s ending on a bar line)
+- Shortest-shot limit, cut 1–2 frames early, add/remove cuts by hand, metronome click on every cut
+
+**Export**
+- Song + markers, pre-cut timeline (one placeholder per shot, song connected), or markers only
+- Frame-exact at 23.976–60 fps; FCPXML 1.9/1.10/1.11; marker styles per type; section chapter markers
+- The launcher finds the song on your Mac (so Final Cut links it, no silent offline clips) and opens the export in Final Cut Pro directly
+- Marker list and shot list CSV for other editors
 
 ## Open it as an app
 
@@ -46,15 +47,9 @@ To keep it in the Dock: in Chrome/Edge choose **Install Beatline** (the install 
 
 Needs `python3` (on a Mac: `xcode-select --install` if it's missing). Options: `BEATLINE_PORT=9000` picks another port, `BEATLINE_NO_OPEN=1` only starts the server.
 
-## Run it
+## Run it as a website
 
-Open it from any static host (GitHub Pages: *Settings → Pages → Deploy from branch → main / root*), or locally:
-
-```sh
-python3 -m http.server 8080   # then open http://localhost:8080
-```
-
-ES modules need to be served over HTTP; opening `index.html` as a `file://` URL won't work.
+It also works from any static host (GitHub Pages: *Settings → Pages → Deploy from branch → main / root*) or `python3 -m http.server`. Without the launcher, Beatline can't see where the song lives on disk, so you type its folder in the Export tab and import the downloaded `.fcpxml` yourself. ES modules need HTTP; opening `index.html` as a `file://` URL won't work.
 
 ## Tests
 
@@ -62,7 +57,7 @@ ES modules need to be served over HTTP; opening `index.html` as a `file://` URL 
 npm test   # Node 18+; no packages to install
 ```
 
-The tests generate synthetic drum loops (90–150 BPM) and check tempo, beat positions, downbeat phase and hit detection, plus FCPXML/CSV output (rational frame times, escaping, file URLs, duplicate-frame merging).
+The tests synthesise drum loops (90–150 BPM), a waltz, a chord progression and a reference tone, and check attack timing (within 10 ms), tempo, beats, half/double-time choice, 3/4 detection and bar 1, confidence, key, loudness (−20 dBFS → −20 LUFS), file-header parsing, sections, the cut plan and FCPXML/CSV output. For real recordings, see `tools/eval/`.
 
 ## Layout
 
@@ -70,7 +65,14 @@ The tests generate synthetic drum loops (90–150 BPM) and check tempo, beat pos
 index.html, guide.html, how-it-works.html, faq.html, styles.css, icon.svg
 beatline.command  launcher: local server + app window
 manifest.webmanifest, sw.js, icons/  installable app, offline cache
-js/dsp.js       beat analysis (pure functions, no DOM)
+js/dsp.js       onset envelopes, tempo, beat tracking (pure functions, no DOM)
+js/analysis.js  confidence, stability, meter, key, loudness, drums
+js/worker.js    runs the analysis off the main thread
+js/player.js    Web Audio playback + sample-accurate click
+js/timeline.js  timeline and overview canvases
+js/fileinfo.js  sample rate from WAV/AIFF/FLAC/MP3/M4A headers
+server.py       launcher server: static files, song finder, send to Final Cut
+tools/eval/     beat-tracking evaluation on real recordings
 js/markers.js   beats → marker list (pacing, bars, user edits)
 js/structure.js bars, energy sections, drop
 js/cutplan.js   cuts, shots and stats for a range

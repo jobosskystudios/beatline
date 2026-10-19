@@ -22,10 +22,16 @@ function keep(density, rel, isDown, bar) {
 }
 
 // beats: seconds. phase: index of the first downbeat within the bar cycle.
-export function buildMarkers({ mode, beats, onsets, phase = 0, beatsPerBar = 4, density = 'beat', offset = 0, edits, sections, autoMap = AUTO_DEFAULT }) {
+export const DRUM_LABEL = { kick: 'Kick', snare: 'Snare', hat: 'Hi-hat' };
+
+export function buildMarkers({ mode, beats, onsets, drums, drumKinds = ['kick', 'snare'], phase = 0, beatsPerBar = 4, density = 'beat', offset = 0, edits, sections, autoMap = AUTO_DEFAULT }) {
   let list = [];
   if (mode === 'hits') {
     list = onsets.map((t, i) => ({ time: t, kind: 'hit', label: `Hit ${i + 1}` }));
+  } else if (mode === 'drums') {
+    for (const kind of drumKinds) {
+      (drums?.[kind] ?? []).forEach((t, i) => list.push({ time: t, kind, label: `${DRUM_LABEL[kind]} ${i + 1}` }));
+    }
   } else {
     beats.forEach((t, i) => {
       const rel = i - phase;

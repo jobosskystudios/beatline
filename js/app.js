@@ -1,73 +1,75 @@
-import { toMono, onsetEnvelope, estimateTempo, trackBeats, downbeatPhase, pickOnsets, hitEnvelope } from './dsp.js';
+import { toMono, trackBeats, pickOnsets, hitEnvelope } from './dsp.js';
+import { analyzeSong, beatChroma, detectMeter, tempoStability, drumHits } from './analysis.js';
 import { buildMarkers, markerKey, DENSITY, PACING, AUTO_DEFAULT } from './markers.js';
 import { FRAME_RATES, MARKER_STYLES, buildFcpxml, buildCsv, buildShotCsv, toFrame, timecode } from './fcpxml.js';
 import { barGrid, detectSections, sectionMarkers, LEVEL_LABEL } from './structure.js';
 import { planCuts, sectionSummary } from './cutplan.js';
+import { Player } from './player.js';
+import { createTimeline, computePeaks, bandNorms } from './timeline.js';
+import { readAudioInfo } from './fileinfo.js';
 
 const $ = (id) => document.getElementById(id);
 const TIGHTNESS = [5, 10, 20, 40, 70, 100, 200, 400, 800, 1600];
-const SETTINGS_KEY = 'beatline.settings.v1';
-const PEAK_BIN = 256;
-const BAND = 18; // px height of the section band above the waveform
+const SETTINGS_KEY = 'beatline.settings.v2';
 
 const DEFAULTS = {
-  mode: 'beats', bpb: '4', density: 'beat', tight: '6', sens: '0.5', minShot: '0.5',
+  mode: 'beats', density: 'bar', tight: '6', sens: '0.5', minShot: '0.5', lead: '0',
   autoLow: AUTO_DEFAULT.low, autoMid: AUTO_DEFAULT.mid, autoHigh: AUTO_DEFAULT.high,
+  drumKick: true, drumSnare: true, drumHat: false,
   fps: '23.976', rounding: 'nearest', styleSection: 'chapter', styleDown: 'standard', styleBeat: 'standard',
   target: 'clip', folder: '', res: '1080p', version: '1.10', eventName: 'Beatline',
 };
+const SETTING_IDS = ['density', 'tight', 'sens', 'minShot', 'lead', 'autoLow', 'autoMid', 'autoHigh', 'fps', 'rounding',
+  'styleSection', 'styleDown', 'styleBeat', 'folder', 'res', 'version', 'eventName'];
+const DRUM_IDS = { drumKick: 'kick', drumSnare: 'snare', drumHat: 'hat' };
 
 const state = {
+  settings: { ...DEFAULTS },
   file: null,
+  audioInfo: null,
   buffer: null,
   mono: null,
-  peaks: null,
-  env: null,
-  low: null,
-  hopTime: 0,
+  wave: null,
+  o: null,
+  chroma: null,
+  info: null,
+  drums: { kick: [], snare: [], hat: [] },
   autoBpm: 0,
   bpm: 0,
   beatFrames: [],
   beats: [],
   onsets: [],
+  bpb: 4,
+  bpbAuto: true,
   autoPhase: 0,
   phaseShift: 0,
+  stability: null,
   bars: [],
   sections: [],
   structureKey: '',
   markers: [],
   plan: null,
-  cutTimes: [],
+  cutFrames: new Set(),
   range: { in: null, out: null },
   edits: { added: [], removed: new Set() },
   view: { start: 0, dur: 1 },
-  settings: { ...DEFAULTS },
-  click: false,
-  lastPlayTime: 0,
   taps: [],
+  server: null, // true when served by beatline.command (can locate files)
+  locate: { status: 'idle', paths: [] },
 };
 
 let audioCtx = null;
-const audio = new Audio();
-audio.preload = 'auto';
+let player = null;
 
 // ---------- settings ----------
 
 function loadSettings() {
-  try {
-    Object.assign(state.settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'));
-  } catch { /* storage unavailable */ }
+  try { Object.assign(state.settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch { /* storage unavailable */ }
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings)); } catch { /* ignore */ }
 }
-
-function fillSelect(el, entries) {
-  el.innerHTML = entries.map(([v, label]) => `<option value="${v}">${label}</option>`).join('');
-}
-
-const SETTING_IDS = ['bpb', 'density', 'tight', 'sens', 'minShot', 'autoLow', 'autoMid', 'autoHigh', 'fps', 'rounding',
-  'styleSection', 'styleDown', 'styleBeat', 'folder', 'res', 'version', 'eventName'];
+const fillSelect = (el, entries) => { el.innerHTML = entries.map(([v, l]) => `<option value="${v}">${l}</option>`).join(''); };
 
 function initControls() {
   fillSelect($('density'), Object.entries(DENSITY));
@@ -81,56 +83,72 @@ function initControls() {
     const valid = el.tagName !== 'SELECT' || [...el.options].some((o) => o.value === String(s[id]));
     if (s[id] !== undefined && valid) el.value = s[id];
     else s[id] = el.value;
-    const live = el.type === 'range' || el.type === 'text' || el.type === 'number';
+    const live = ['range', 'text', 'number'].includes(el.type);
     el.addEventListener(live ? 'input' : 'change', () => {
       s[id] = el.value;
       saveSettings();
-      onSettingChanged(id);
+      onSetting(id);
     });
   }
-  setupSeg('mode');
-  setupSeg('target');
-  updateVisibility();
+  for (const id of Object.keys(DRUM_IDS)) {
+    $(id).checked = !!s[id];
+    $(id).addEventListener('change', () => { s[id] = $(id).checked; saveSettings(); refresh(); });
+  }
+  for (const id of ['mode', 'target']) {
+    $(id).addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      s[id] = b.dataset.v;
+      saveSettings();
+      updateVisibility();
+      onSetting(id);
+    });
+  }
+  for (const b of document.querySelectorAll('.tabs button')) b.addEventListener('click', () => showTab(b.dataset.tab));
 
-  $('bpm').addEventListener('change', () => retrack(true));
-  $('tap').addEventListener('click', tapTempo);
-  $('half').addEventListener('click', () => scaleBpm(0.5));
-  $('double').addEventListener('click', () => scaleBpm(2));
-  $('phaseL').addEventListener('click', () => shiftPhase(-1));
-  $('phaseR').addEventListener('click', () => shiftPhase(1));
-  $('offset').addEventListener('input', refresh);
-  $('resetEdits').addEventListener('click', () => {
-    state.edits = { added: [], removed: new Set() };
+  $('bpb').addEventListener('change', () => {
+    state.bpb = +$('bpb').value;
+    state.bpbAuto = false;
+    state.structureKey = '';
+    phaseFromAudio();
     refresh();
   });
+  $('bpm').addEventListener('change', () => retrack(true));
+  $('tap').addEventListener('click', tapTempo);
+  $('half').addEventListener('click', () => setBpm(state.bpm / 2));
+  $('double').addEventListener('click', () => setBpm(state.bpm * 2));
+  $('phaseL').addEventListener('click', () => { state.phaseShift--; refresh(); });
+  $('phaseR').addEventListener('click', () => { state.phaseShift++; refresh(); });
+  $('barHere').addEventListener('click', barOneAtPlayhead);
+  $('offset').addEventListener('input', refresh);
+  $('nudgeL').addEventListener('click', () => nudge(-10));
+  $('nudgeR').addEventListener('click', () => nudge(10));
+  $('resetEdits').addEventListener('click', () => { state.edits = { added: [], removed: new Set() }; refresh(); });
   $('setIn').addEventListener('click', () => setRangeEdge('in'));
   $('setOut').addEventListener('click', () => setRangeEdge('out'));
   $('clearRange').addEventListener('click', clearRange);
   for (const b of document.querySelectorAll('[data-fit]')) b.addEventListener('click', () => quickRange(+b.dataset.fit));
   $('exportXml').addEventListener('click', exportXml);
+  $('exportXml2').addEventListener('click', exportXml);
   $('exportCsv').addEventListener('click', exportCsv);
   $('exportShots').addEventListener('click', exportShots);
   $('copyXml').addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText($('xmlText').value);
-      toast('Copied FCPXML');
-    } catch {
-      $('xmlText').select();
-      toast('Press ⌘C to copy');
-    }
+    try { await navigator.clipboard.writeText($('xmlText').value); toast('Copied FCPXML'); } catch { $('xmlText').select(); toast('Press ⌘C to copy'); }
   });
+  $('folder').addEventListener('change', verifyFolder);
+  $('sectionTable').addEventListener('click', onRowClick);
+  $('shotTable').addEventListener('click', onRowClick);
+  $('play').addEventListener('click', togglePlay);
+  $('clickToggle').addEventListener('click', toggleClick);
+  $('zoomIn').addEventListener('click', () => zoom(0.5));
+  $('zoomOut').addEventListener('click', () => zoom(2));
+  $('zoomFit').addEventListener('click', fitView);
+  updateVisibility();
 }
 
-function setupSeg(id) {
-  const root = $(id);
-  root.addEventListener('click', (e) => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    state.settings[id] = b.dataset.v;
-    saveSettings();
-    updateVisibility();
-    onSettingChanged(id);
-  });
+function showTab(tab) {
+  for (const b of document.querySelectorAll('.tabs button')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+  for (const p of document.querySelectorAll('.tabpanel')) p.hidden = p.dataset.panel !== tab;
 }
 
 function updateVisibility() {
@@ -144,16 +162,17 @@ function updateVisibility() {
     }
   }
   for (const el of document.querySelectorAll('[data-for-density]')) el.hidden = s.density !== el.dataset.forDensity;
+  for (const el of document.querySelectorAll('[data-mode-only]')) el.hidden = el.dataset.modeOnly !== s.mode;
   $('tightOut').textContent = `(${s.tight}/10)`;
   $('sensOut').textContent = `(${Math.round(s.sens * 100)}%)`;
 }
 
-function onSettingChanged(id) {
+function onSetting(id) {
   updateVisibility();
-  if (!state.env) return;
+  if (!state.o) return;
   if (id === 'tight') retrack(false);
   else if (id === 'sens') { detectHits(); refresh(); }
-  else if (id === 'bpb') { state.phaseShift = 0; state.autoPhase = downbeatPhase(state.beatFrames, state.low, +state.settings.bpb); refresh(); }
+  else if (id === 'fps') { refresh(); updateTime(); }
   else refresh();
 }
 
@@ -162,102 +181,226 @@ function onSettingChanged(id) {
 async function loadFile(file) {
   if (!file) return;
   audioCtx ??= new AudioContext();
-  $('dropTitle').textContent = file.name;
-  $('dropSub').textContent = 'Decoding…';
+  player ??= new Player(audioCtx);
+  player.stop();
+  setBusy(`Reading ${file.name}…`);
+  $('fileName').textContent = file.name;
+  $('fileMeta').textContent = 'Decoding…';
   try {
-    const buffer = await audioCtx.decodeAudioData(await file.arrayBuffer());
-    state.file = file;
-    state.buffer = buffer;
+    const bytes = await file.arrayBuffer();
+    state.audioInfo = readAudioInfo(bytes.slice(0, 1 << 20));
+    let buffer;
+    try {
+      buffer = await audioCtx.decodeAudioData(bytes);
+    } catch {
+      $('fileMeta').textContent = 'Couldn’t read this file';
+      setBusy(null, 'That file couldn’t be decoded. Try WAV, AIFF, MP3 or M4A.');
+      toast('Couldn’t read that audio file');
+      return;
+    }
     const channels = [];
     for (let c = 0; c < buffer.numberOfChannels; c++) channels.push(buffer.getChannelData(c));
-    state.mono = toMono(channels);
-    state.peaks = computePeaks(state.mono);
-    state.edits = { added: [], removed: new Set() };
-    state.range = { in: null, out: null };
-    state.phaseShift = 0;
-    state.structureKey = '';
+    Object.assign(state, {
+      file, buffer,
+      mono: toMono(channels),
+      edits: { added: [], removed: new Set() },
+      range: { in: null, out: null },
+      phaseShift: 0,
+      bpbAuto: true,
+      structureKey: '',
+      view: { start: 0, dur: buffer.duration },
+      locate: { status: 'idle', paths: [] },
+    });
     $('bpm').value = '';
-    if (audio.src) URL.revokeObjectURL(audio.src);
-    audio.src = URL.createObjectURL(file);
-    state.view = { start: 0, dur: buffer.duration };
-    $('dropSub').textContent = 'Analyzing beats and sections…';
-    await new Promise((r) => setTimeout(r, 30)); // let the label paint
+    $('offset').value = '0';
+    player.load(buffer);
+    setBusy('Listening: tempo, bars, sections, key, loudness…');
     const t0 = performance.now();
-    const { env, low, hopTime } = onsetEnvelope(state.mono, buffer.sampleRate);
-    Object.assign(state, { env, low, hopTime });
-    state.autoBpm = estimateTempo(env, hopTime);
-    detectHits();
-    retrack(true);
-    $('dropSub').textContent = `${fmtDur(buffer.duration)} · ${buffer.numberOfChannels} ch · analyzed in ${Math.round(performance.now() - t0)} ms · click to load another`;
-    $('drop').classList.add('compact');
-    $('waveEmpty').hidden = true;
-    $('planPanel').hidden = false;
-    for (const id of ['play', 'clickToggle', 'zoomIn', 'zoomOut', 'zoomFit', 'exportXml', 'exportCsv', 'exportShots']) $(id).disabled = false;
+    const result = await analyzeInBackground(channels, buffer.sampleRate);
+    applyAnalysis(result);
+    // Open on the first 8 bars, where you can see each beat against the waveform.
+    const firstBeat = state.beats[0] ?? 0;
+    setView({ start: Math.max(0, firstBeat - 0.5), dur: Math.min(buffer.duration, (60 / state.bpm) * state.bpb * 8 + 1) });
+    const rate = state.audioInfo?.sampleRate ?? buffer.sampleRate;
+    $('fileMeta').textContent = `${fmtDur(buffer.duration)} · ${(rate / 1000).toFixed(1)} kHz · ${buffer.numberOfChannels} ch · ${Math.round(performance.now() - t0)} ms`;
+    showWorkspace();
+    locateSong();
   } catch (err) {
     console.error(err);
-    $('dropSub').textContent = 'Couldn’t decode that file. Try WAV, AIFF, MP3 or M4A.';
-    toast('Couldn’t read that audio file');
+    setBusy(null, `Analysis failed: ${err.message}. Please report this with the song’s format.`);
+    toast('Analysis failed');
   }
 }
 
-function computePeaks(mono) {
-  const n = Math.ceil(mono.length / PEAK_BIN);
-  const peaks = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    let m = 0;
-    const end = Math.min(mono.length, (i + 1) * PEAK_BIN);
-    for (let j = i * PEAK_BIN; j < end; j++) { const v = Math.abs(mono[j]); if (v > m) m = v; }
-    peaks[i] = m;
-  }
-  return peaks;
+function analyzeInBackground(channels, sampleRate) {
+  const copies = channels.map((c) => c.slice());
+  return new Promise((resolve, reject) => {
+    let worker;
+    try {
+      worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+    } catch {
+      resolve(analyzeSong({ channels: copies, sampleRate }));
+      return;
+    }
+    worker.onmessage = ({ data }) => {
+      worker.terminate();
+      if (data.ok) resolve(data.result);
+      else reject(new Error(data.error));
+    };
+    worker.onerror = (e) => {
+      // Module workers unavailable: analyse inline instead.
+      e.preventDefault();
+      worker.terminate();
+      try { resolve(analyzeSong({ channels: channels.map((c) => c.slice()), sampleRate })); } catch (err) { reject(err); }
+    };
+    worker.postMessage({ channels: copies, sampleRate }, copies.map((c) => c.buffer));
+  });
 }
 
-function detectHits() {
-  state.onsets = pickOnsets(hitEnvelope(state.env, state.low), state.hopTime, +state.settings.sens);
-}
-
-function retrack(resetPhase) {
-  if (!state.env) return;
-  const manual = parseFloat($('bpm').value);
-  state.bpm = manual > 0 ? manual : state.autoBpm;
-  state.beatFrames = trackBeats(state.env, state.hopTime, state.bpm, TIGHTNESS[+state.settings.tight - 1]);
-  state.beats = state.beatFrames.map((f) => f * state.hopTime);
-  if (resetPhase) {
-    state.phaseShift = 0;
-    state.autoPhase = downbeatPhase(state.beatFrames, state.low, +state.settings.bpb);
-  }
-  refresh();
-}
-
-function scaleBpm(k) {
-  if (!state.env) return;
-  $('bpm').value = (state.bpm * k).toFixed(2);
+function applyAnalysis(r) {
+  state.o = r.o;
+  state.chroma = r.chroma;
+  state.info = r.info;
+  state.drums = r.drums;
+  state.autoBpm = r.bpm;
+  state.bpb = r.info.meter.beatsPerBar;
+  $('bpb').value = String(state.bpb);
+  state.wave = {
+    peaks: computePeaks(state.mono),
+    bands: r.o.bands,
+    hopTime: r.o.hopTime,
+    norms: bandNorms(r.o.bands),
+    sampleRate: state.buffer.sampleRate,
+  };
+  detectHits();
   retrack(true);
 }
 
-function shiftPhase(d) {
-  state.phaseShift += d;
+function detectHits() {
+  const sens = +state.settings.sens;
+  state.onsets = pickOnsets(hitEnvelope(state.o.env, state.o.low), state.o.hopTime, sens, 0.08, state.o.active);
+  if (state.drums) state.drums = drumHits(state.o, sens);
+}
+
+function retrack(resetPhase) {
+  if (!state.o) return;
+  const manual = parseFloat($('bpm').value);
+  state.bpm = manual > 0 ? manual : state.autoBpm;
+  state.beatFrames = trackBeats(state.o.env, state.o.hopTime, state.bpm, TIGHTNESS[+state.settings.tight - 1], state.o.active);
+  state.beats = state.beatFrames.map((f) => f * state.o.hopTime);
+  state.stability = tempoStability(state.beats);
+  state.structureKey = '';
+  if (resetPhase) {
+    state.phaseShift = 0;
+    phaseFromAudio();
+  }
   refresh();
+}
+
+function phaseFromAudio() {
+  const meter = detectMeter(state.beatFrames, state.o.low, beatChroma(state.chroma, state.beats, state.buffer.duration), { candidates: [state.bpb] });
+  state.autoPhase = meter.phase;
+}
+
+function setBpm(bpm) {
+  if (!state.o) return;
+  $('bpm').value = bpm.toFixed(2);
+  retrack(true);
 }
 
 function tapTempo() {
   const now = performance.now() / 1000;
   if (state.taps.length && now - state.taps[state.taps.length - 1] > 2) state.taps = [];
   state.taps.push(now);
-  if (state.taps.length < 4) {
-    toast(`Keep tapping… ${4 - state.taps.length} more`);
-    return;
-  }
+  if (state.taps.length < 4) { toast(`Keep tapping… ${4 - state.taps.length} more`); return; }
   const gaps = state.taps.slice(1).map((t, i) => t - state.taps[i]).sort((a, b) => a - b);
   const bpm = 60 / gaps[Math.floor(gaps.length / 2)];
-  $('bpm').value = bpm.toFixed(1);
   toast(`Tapped ${bpm.toFixed(1)} BPM`);
-  if (state.env) retrack(true);
+  if (state.o) setBpm(bpm); else $('bpm').value = bpm.toFixed(1);
+}
+
+function nudge(ms) {
+  $('offset').value = String((parseFloat($('offset').value) || 0) + ms);
+  refresh();
+}
+
+function barOneAtPlayhead() {
+  if (!state.beats.length) return;
+  const t = player.time;
+  let i = 0;
+  state.beats.forEach((b, k) => { if (Math.abs(b - t) < Math.abs(state.beats[i] - t)) i = k; });
+  const bpb = state.bpb;
+  state.phaseShift = ((i - state.autoPhase) % bpb + bpb) % bpb;
+  toast(`Bar 1 now starts at ${fmtTime(state.beats[i])}`);
+  refresh();
+}
+
+// ---------- song location (for Final Cut) ----------
+
+async function api(path) {
+  const res = await fetch(path, { cache: 'no-store' });
+  if (!res.ok) throw new Error(res.status);
+  return res.json();
+}
+
+async function detectServer() {
+  try { state.server = (await api('api/ping')).app === 'beatline'; } catch { state.server = false; }
+}
+
+const dirname = (p) => p.replace(/\/[^/]*$/, '') || '/';
+
+async function locateSong() {
+  if (state.server === null) await detectServer();
+  if (!state.server) {
+    state.locate = { status: 'unavailable', paths: [] };
+    renderLocate();
+    return;
+  }
+  state.locate = { status: 'searching', paths: [] };
+  renderLocate();
+  try {
+    const { paths } = await api(`api/locate?name=${encodeURIComponent(state.file.name)}&size=${state.file.size}`);
+    if (paths.length) {
+      state.locate = { status: 'found', paths };
+      $('folder').value = state.settings.folder = dirname(paths[0]);
+      saveSettings();
+    } else {
+      state.locate = { status: 'notfound', paths: [] };
+    }
+  } catch {
+    state.locate = { status: 'unavailable', paths: [] };
+  }
+  renderLocate();
+}
+
+async function verifyFolder() {
+  if (!state.server || !state.file) return renderLocate();
+  const path = `${$('folder').value.trim().replace(/\/+$/, '')}/${state.file.name}`;
+  try {
+    const { exists, size } = await api(`api/exists?path=${encodeURIComponent(path)}`);
+    state.locate = { status: exists && size === state.file.size ? 'found' : 'missing', paths: exists ? [path] : [] };
+  } catch { /* keep previous */ }
+  renderLocate();
+}
+
+function renderLocate() {
+  const { status, paths } = state.locate;
+  const msg = {
+    idle: 'Open a song first.',
+    searching: '<span class="busy"><span class="spinner"></span>Looking for the song on your Mac…</span>',
+    found: `<span class="ok">✓ Found on your Mac${paths.length > 1 ? ` (${paths.length} copies, using the newest)` : ''}</span>`,
+    notfound: '<span class="bad">Couldn’t find this file on your Mac.</span> Type its folder below.',
+    missing: '<span class="bad">✗ That folder doesn’t contain this song.</span> Final Cut would show it offline.',
+    unavailable: 'Browsers can’t see where a file lives. Type its folder below, or run <code>./beatline.command</code> and Beatline finds it for you.',
+  }[status];
+  $('locateStatus').innerHTML = msg;
+  $('locatePath').textContent = status === 'found' ? paths[0] : '';
 }
 
 // ---------- range ----------
 
 const rate = () => FRAME_RATES[state.settings.fps];
+const fpsNum = () => rate().den / rate().num;
 const songFrames = () => Math.max(1, Math.floor((state.buffer.duration * rate().den) / rate().num));
 const frameSec = (f) => (f * rate().num) / rate().den;
 
@@ -272,8 +415,7 @@ function rangeFrames() {
 
 function setRangeEdge(edge) {
   if (!state.buffer) return;
-  const t = audio.currentTime || 0;
-  state.range[edge] = t;
+  state.range[edge] = player.time;
   const { in: a, out: b } = state.range;
   if (a != null && b != null && b <= a) state.range[edge === 'in' ? 'out' : 'in'] = null;
   refresh();
@@ -284,68 +426,64 @@ function clearRange() {
   refresh();
 }
 
-// A range of about `seconds`, starting on the bar line nearest the playhead
-// and ending on a bar line, so the music edit lands on the grid.
 function quickRange(seconds) {
   if (!state.buffer) return;
   const lines = [0, ...state.bars.map((b) => b.start), state.buffer.duration];
   const nearest = (t) => lines.reduce((p, c) => (Math.abs(c - t) < Math.abs(p - t) ? c : p), lines[0]);
-  const a = nearest(audio.currentTime || 0);
+  const a = nearest(player.time);
   let b = nearest(a + seconds);
   if (b <= a) b = Math.min(state.buffer.duration, a + seconds);
   state.range = { in: a, out: b };
-  state.view = { start: Math.max(0, a - seconds * 0.1), dur: Math.min(state.buffer.duration, seconds * 1.2) };
-  clampView();
+  setView({ start: a - seconds * 0.1, dur: seconds * 1.2 });
   refresh();
 }
 
 // ---------- markers, structure & cut plan ----------
 
 function phase() {
-  const bpb = +state.settings.bpb;
-  return (((state.autoPhase + state.phaseShift) % bpb) + bpb) % bpb;
+  return (((state.autoPhase + state.phaseShift) % state.bpb) + state.bpb) % state.bpb;
 }
 
 function updateStructure() {
-  const key = `${state.beats.length}|${state.beats[0]}|${state.bpm}|${phase()}|${state.settings.bpb}`;
+  const key = `${state.beats.length}|${state.beats[0]}|${state.bpm}|${phase()}|${state.bpb}`;
   if (key === state.structureKey) return;
   state.structureKey = key;
-  state.bars = barGrid(state.beats, phase(), +state.settings.bpb, state.buffer.duration);
+  state.bars = barGrid(state.beats, phase(), state.bpb, state.buffer.duration);
   state.sections = detectSections(state.mono, state.buffer.sampleRate, state.bars, state.buffer.duration);
 }
 
 function refresh() {
-  if (!state.env) return;
+  if (!state.o) return;
   updateStructure();
   const s = state.settings;
+  const offset = (parseFloat($('offset').value) || 0) / 1000 - (parseInt(s.lead, 10) || 0) / fpsNum();
   state.markers = buildMarkers({
     mode: s.mode,
     beats: state.beats,
     onsets: state.onsets,
+    drums: state.drums,
+    drumKinds: Object.entries(DRUM_IDS).filter(([id]) => s[id]).map(([, k]) => k),
     phase: phase(),
-    beatsPerBar: +s.bpb,
+    beatsPerBar: state.bpb,
     density: s.density,
-    offset: (parseFloat($('offset').value) || 0) / 1000,
+    offset,
     edits: state.edits,
     sections: state.sections,
     autoMap: { low: s.autoLow, mid: s.autoMid, high: s.autoHigh },
   });
   const { inFrame, outFrame } = rangeFrames();
-  const fps = rate().den / rate().num;
   state.plan = planCuts({
     markers: state.markers,
     rate: rate(),
     rounding: s.rounding,
     inFrame,
     outFrame,
-    minShotFrames: Math.round((parseFloat(s.minShot) || 0) * fps),
+    minShotFrames: Math.round((parseFloat(s.minShot) || 0) * fpsNum()),
     sections: state.sections,
   });
-  state.cutTimes = state.plan.cuts.map(frameSec);
+  state.cutFrames = new Set(state.plan.cuts);
 
   const st = state.plan.stats;
-  $('sBpm').textContent = state.bpm ? state.bpm.toFixed(1) : '–';
-  $('bpm').placeholder = state.autoBpm ? `auto (${state.autoBpm.toFixed(1)})` : 'auto';
   $('sCuts').textContent = st.cuts;
   $('sShots').textContent = st.shots;
   $('sAsl').textContent = `${st.avgShot.toFixed(1)}s`;
@@ -353,13 +491,63 @@ function refresh() {
   $('sLen').textContent = fmtDur(st.lengthSec);
   const ranged = state.range.in != null || state.range.out != null;
   $('sLenLabel').textContent = ranged ? 'range length' : 'length';
-  $('rangeLabel').textContent = ranged
-    ? `${timecode(inFrame, rate())} → ${timecode(outFrame, rate())}`
-    : 'Whole song';
+  $('rangeLabel').textContent = ranged ? `${timecode(inFrame, rate())} → ${timecode(outFrame, rate())}` : 'Whole song';
   $('resetEdits').disabled = !state.edits.added.length && !state.edits.removed.size;
+  $('bpm').placeholder = `auto (${state.autoBpm.toFixed(1)})`;
+  renderAnalysis();
   renderPlan(inFrame, outFrame);
   draw();
 }
+
+// ---------- rendering: analysis facts ----------
+
+function renderAnalysis() {
+  const info = state.info;
+  const stab = state.stability;
+  const conf = info.confidence;
+  $('confPill').className = `pill ${conf}`;
+  $('confPill').textContent = { high: '● Confident', medium: '● Fairly sure', low: '● Unsure' }[conf];
+  $('confPill').title = `Beat periodicity ${(info.periodicity * 100).toFixed(0)}%`;
+  $('lowConf').hidden = conf !== 'low';
+  $('lowConfText').textContent = 'No steady beat here (speech, rubato or free-time music), so the grid may wander. Try Drums or Any hit, tap the tempo, or add cuts by hand.';
+
+  $('fTempo').innerHTML = `${state.bpm.toFixed(1)} <small>BPM</small>`;
+  const kindText = { steady: 'Steady tempo', live: 'Live feel, slight drift', changing: 'Tempo changes', unknown: 'Too short to tell' }[stab.kind];
+  $('fTempoSub').textContent = stab.kind === 'unknown' ? kindText : `${kindText} · ${stab.min.toFixed(0)}–${stab.max.toFixed(0)} BPM`;
+  $('tempoChips').innerHTML = info.candidates
+    .filter((c) => c.label !== 'Detected')
+    .map((c) => `<button data-bpm="${c.bpm}" class="${Math.abs(c.bpm - state.bpm) < 0.5 ? 'on' : ''}" title="${c.label} the detected tempo · ${Math.round(c.strength * 100)}% as strong">${c.label} ${c.bpm.toFixed(0)}</button>`)
+    .join('') + (Math.abs(state.bpm - state.autoBpm) > 0.5 ? `<button data-bpm="${state.autoBpm}">Detected ${state.autoBpm.toFixed(1)}</button>` : '');
+  for (const b of $('tempoChips').querySelectorAll('button')) b.onclick = () => setBpm(+b.dataset.bpm);
+  const tightHigh = +state.settings.tight >= 6;
+  $('tightNote').innerHTML = stab.kind !== 'steady' && stab.kind !== 'unknown' && tightHigh
+    ? `This song’s tempo moves (${stab.min.toFixed(0)}–${stab.max.toFixed(0)} BPM). <a href="#" id="loosen">Loosen the grid</a> so it follows the band.`
+    : 'High for click-tracked pop and EDM; low for live bands that drift.';
+  $('loosen')?.addEventListener('click', (e) => { e.preventDefault(); $('tight').value = '3'; state.settings.tight = '3'; saveSettings(); updateVisibility(); retrack(false); });
+
+  const det = info.meter.beatsPerBar;
+  $('fMeter').innerHTML = `${state.bpb}/${state.bpb === 6 ? 8 : 4}`;
+  const bar1 = state.bars[0]?.start ?? 0;
+  $('fMeterSub').textContent = `${state.bpbAuto ? 'Detected' : `Set by you (heard ${det}/4)`} · bar 1 at ${fmtTime(bar1)}`;
+
+  const secs = state.sections;
+  const drop = secs.find((x) => x.drop);
+  $('fShape').innerHTML = `${secs.length} <small>${secs.length === 1 ? 'section' : 'sections'} · ${state.bars.length} bars</small>`;
+  $('fShapeSub').textContent = secs.length === 1 ? 'Even energy throughout' : drop ? `Drop at ${fmtTime(drop.start)} (bar ${drop.firstBar})` : secs.some((x) => x.level === 'high') ? `Peak at ${fmtTime(secs.find((x) => x.level === 'high').start)}` : 'Even energy throughout';
+
+  $('fKey').textContent = info.key.name;
+  $('fKeySub').textContent = `Camelot ${info.key.camelot} · estimate`;
+
+  const L = info.loudness;
+  $('fLoud').innerHTML = `${Number.isFinite(L.lufs) ? L.lufs.toFixed(1) : '–'} <small>LUFS</small>`;
+  $('fLoudSub').textContent = `Peak ${L.peakDb.toFixed(1)} dBFS · streaming plays at about −14`;
+
+  const sp = info.span;
+  $('fSpan').innerHTML = `${fmtTime(sp.start)} <small>→ ${fmtDur(sp.end)}</small>`;
+  $('fSpanSub').textContent = `Lead-in ${sp.start.toFixed(2)} s · tail ${(state.buffer.duration - sp.end).toFixed(1)} s`;
+}
+
+// ---------- rendering: cut plan ----------
 
 const LEVEL_VAR = { low: '--lvl-low', mid: '--lvl-mid', high: '--lvl-high' };
 
@@ -381,50 +569,33 @@ function renderPlan(inFrame, outFrame) {
       <td>${r.avgShot.toFixed(1)}s</td>
     </tr>`;
   }).join('');
-
   const st = state.plan.stats;
-  const notes = [`Shortest shot ${st.shortest.toFixed(2)}s`, `longest ${st.longest.toFixed(2)}s`];
-  if (st.dropped > 0) notes.push(`${st.dropped} cut${st.dropped > 1 ? 's' : ''} skipped by the shortest-shot limit (shown faded)`);
-  $('planNote').textContent = notes.join(' · ') + '.';
-
+  const notes = [`Shortest shot ${st.shortest.toFixed(2)} s`, `longest ${st.longest.toFixed(2)} s`];
+  if (st.dropped > 0) notes.push(`${st.dropped} cut${st.dropped > 1 ? 's' : ''} skipped by the shortest-shot limit (faded on the timeline)`);
+  $('planNote').textContent = `${notes.join(' · ')}.`;
   $('shotSummary').textContent = `Shot list: ${st.shots} shots`;
   $('shotTable').tBodies[0].innerHTML = state.plan.shots.map((x) => `<tr class="clickable" data-t="${frameSec(x.start)}">
-      <td>${x.index}</td>
-      <td>${timecode(x.start - inFrame, rate())}</td>
-      <td>${x.seconds.toFixed(2)}s</td>
-      <td>${x.frames}</td>
-      <td>${x.section ? `<i class="dot" style="background:var(${LEVEL_VAR[x.section.level]})"></i>${x.section.label}` : ''}</td>
+      <td>${x.index}</td><td>${timecode(x.start - inFrame, rate())}</td><td>${x.seconds.toFixed(2)}s</td><td>${x.frames}</td>
+      <td>${x.section ? `<span class="chip"><i class="dot" style="background:var(${LEVEL_VAR[x.section.level]})"></i>${x.section.label}</span>` : ''}</td>
     </tr>`).join('');
 }
 
-function onTableClick(e) {
+function onRowClick(e) {
   const tr = e.target.closest('tr[data-t]');
   if (!tr) return;
-  seek(+tr.dataset.t);
   const t = +tr.dataset.t;
-  if (t < state.view.start || t > state.view.start + state.view.dur) {
-    state.view.start = t - state.view.dur * 0.1;
-    clampView();
-  }
-  draw();
-}
-$('sectionTable').addEventListener('click', onTableClick);
-$('shotTable').addEventListener('click', onTableClick);
-
-function exportStyles() {
-  const s = state.settings;
-  return { section: s.styleSection, downbeat: s.styleDown, beat: s.styleBeat, hit: s.styleBeat, manual: 'todo' };
+  seek(t);
+  if (t < state.view.start || t > state.view.start + state.view.dur) setView({ start: t - state.view.dur * 0.1, dur: state.view.dur });
 }
 
-// Only cuts that survive the shortest-shot rule are exported, plus section markers.
-function exportMarkers() {
-  const cutFrames = new Set(state.plan.cuts);
-  const cuts = state.markers.filter((m) => cutFrames.has(toFrame(m.time, rate(), state.settings.rounding)));
-  return [...cuts, ...sectionMarkers(state.sections)];
+// ---------- editing ----------
+
+function isCut(m) {
+  return state.cutFrames.has(toFrame(m.time, rate(), state.settings.rounding));
 }
 
-function toggleMarkerAt(time, pxTolerance) {
-  const tol = (pxTolerance / canvas.clientWidth) * state.view.dur;
+function toggleMarkerAt(time) {
+  const tol = (8 / $('timeline').clientWidth) * state.view.dur;
   let nearest = null;
   for (const m of state.markers) {
     if (Math.abs(m.time - time) <= tol && (!nearest || Math.abs(m.time - time) < Math.abs(nearest.time - time))) nearest = m;
@@ -438,18 +609,46 @@ function toggleMarkerAt(time, pxTolerance) {
   refresh();
 }
 
+function jumpCut(dir) {
+  const t = player.time;
+  const times = state.plan.cuts.map(frameSec);
+  const next = dir > 0 ? times.find((x) => x > t + 0.01) : [...times].reverse().find((x) => x < t - 0.01);
+  if (next != null) {
+    seek(next);
+    if (next < state.view.start || next > state.view.start + state.view.dur) setView({ start: next - state.view.dur / 2, dur: state.view.dur });
+  }
+}
+
 // ---------- export ----------
 
-function songBase() {
-  return state.file.name.replace(/\.[^.]+$/, '');
+const songBase = () => state.file.name.replace(/\.[^.]+$/, '');
+
+function exportMarkers() {
+  const cuts = state.markers.filter(isCut);
+  return [...cuts, ...sectionMarkers(state.sections)];
+}
+
+function exportStyles() {
+  const s = state.settings;
+  return { section: s.styleSection, downbeat: s.styleDown, beat: s.styleBeat, hit: s.styleBeat, kick: s.styleBeat, snare: s.styleBeat, hat: s.styleBeat, manual: 'todo' };
 }
 
 function exportXml() {
+  if (!state.plan) return;
   const s = state.settings;
-  if (s.target !== 'gap' && !s.folder.trim().startsWith('/')) {
-    toast('Add the song’s folder path (starts with /), or choose “Markers only”');
-    $('folder').focus();
-    return;
+  if (s.target !== 'gap') {
+    if (!s.folder.trim().startsWith('/')) {
+      showTab('export');
+      toast('Add the song’s folder (starts with /) so Final Cut can play it, or export Markers only');
+      $('folder').focus();
+      return;
+    }
+    if (state.locate.status === 'missing') {
+      showTab('export');
+      toast('That folder doesn’t contain the song: Final Cut would import it silent. Fix the folder first.');
+      $('folder').focus();
+      return;
+    }
   }
   const name = songBase();
   const kind = { clip: 'markers', blocked: 'pre-cut', gap: 'markers only' }[s.target];
@@ -469,15 +668,36 @@ function exportXml() {
       folder: s.folder.trim(),
       duration: state.buffer.duration,
       sampleRate: state.buffer.sampleRate,
-      channels: state.buffer.numberOfChannels,
+      audioRate: state.audioInfo?.sampleRate,
+      channels: state.audioInfo?.channels ?? state.buffer.numberOfChannels,
     },
     eventName: s.eventName || 'Beatline',
     projectName: `${name} – ${kind} (${state.plan.stats.cuts} cuts)`,
   });
-  download(`${name} ${kind}.fcpxml`, xml, 'application/xml');
   $('xmlText').value = xml;
   $('xmlBox').hidden = false;
-  toast('Saved. In Final Cut Pro: File › Import › XML…');
+  sendToFinalCut(`${name} ${kind}`, xml);
+}
+
+// With the launcher running, save straight to ~/Movies/Beatline and open it
+// in Final Cut; otherwise download the file.
+async function sendToFinalCut(name, xml) {
+  if (state.server) {
+    try {
+      const res = await fetch(`api/send?name=${encodeURIComponent(name)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/xml', 'X-Beatline': '1' },
+        body: xml,
+      });
+      if (res.ok) {
+        const { path, opened } = await res.json();
+        toast(opened ? 'Opening in Final Cut Pro…' : `Saved to ${path}. In Final Cut: File › Import › XML…`);
+        return;
+      }
+    } catch { /* fall back to a download */ }
+  }
+  download(`${name}.fcpxml`, xml, 'application/xml');
+  toast('Saved. Double-click it, or in Final Cut: File › Import › XML…');
 }
 
 function exportCsv() {
@@ -497,209 +717,118 @@ function download(name, text, type) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-// ---------- waveform ----------
+// ---------- timeline & playback ----------
 
-const canvas = $('wave');
-const ctx2d = canvas.getContext('2d');
-const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-const KIND_COLOR = { downbeat: '--downbeat', beat: '--beat', hit: '--hit', manual: '--manual' };
+const timeline = createTimeline({
+  canvas: $('timeline'),
+  overview: $('overview'),
+  get: () => (state.o && state.wave ? {
+    duration: state.buffer.duration,
+    view: state.view,
+    time: player.time,
+    wave: state.wave,
+    bars: state.bars,
+    beats: state.beats,
+    barLen: (60 / state.bpm) * state.bpb,
+    bpm: state.bpm,
+    sections: state.sections,
+    sectionsKey: state.structureKey,
+    tempoCurve: state.stability?.curve ?? [],
+    markers: state.markers,
+    isCut,
+    mode: state.settings.mode,
+    drums: state.drums,
+    range: state.range.in != null || state.range.out != null ? [frameSec(rangeFrames().inFrame), frameSec(rangeFrames().outFrame)] : null,
+  } : null),
+  onSeek: (t) => seek(t),
+  onToggle: (t) => toggleMarkerAt(t),
+  onRange: (a, b) => { state.range = { in: a, out: b }; refresh(); },
+  onView: (v) => setView(v),
+});
 
 function draw() {
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight;
-  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
-  }
-  ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx2d.clearRect(0, 0, w, h);
-  if (!state.buffer) return;
-
-  const { start, dur } = state.view;
-  const sr = state.buffer.sampleRate;
-  const top = BAND + 2;
-  const mid = top + (h - top) / 2;
-  const xOf = (t) => ((t - start) / dur) * w;
-  ctx2d.font = '11px -apple-system, system-ui, sans-serif';
-
-  // Section band.
-  for (const s of state.sections) {
-    const x0 = Math.max(0, xOf(s.start));
-    const x1 = Math.min(w, xOf(s.end));
-    if (x1 <= 0 || x0 >= w) continue;
-    ctx2d.fillStyle = css(LEVEL_VAR[s.level]);
-    ctx2d.globalAlpha = 0.85;
-    ctx2d.fillRect(x0, 0, x1 - x0 - 1, BAND);
-    ctx2d.globalAlpha = 1;
-    if (x1 - x0 > 44) {
-      ctx2d.fillStyle = '#fff';
-      ctx2d.fillText(s.drop ? '▼ DROP' : s.label, x0 + 5, 13);
-    }
-  }
-
-  // Waveform (max |amplitude| per column).
-  ctx2d.fillStyle = css('--wave-strong');
-  const peaks = state.peaks;
-  const half = (h - top) / 2 - 6;
-  for (let x = 0; x < w; x++) {
-    const b0 = Math.floor(((start + (x / w) * dur) * sr) / PEAK_BIN);
-    const b1 = Math.max(b0 + 1, Math.floor(((start + ((x + 1) / w) * dur) * sr) / PEAK_BIN));
-    let m = 0;
-    for (let b = Math.max(0, b0); b < Math.min(peaks.length, b1); b++) if (peaks[b] > m) m = peaks[b];
-    const y = Math.max(0.5, m * half);
-    ctx2d.fillRect(x, mid - y, 1, y * 2);
-  }
-
-  // Cut markers; markers that aren't cuts (range, shortest-shot rule) are faded.
-  const colors = Object.fromEntries(Object.entries(KIND_COLOR).map(([k, v]) => [k, css(v)]));
-  const cutFrames = new Set(state.plan?.cuts ?? []);
-  const pxPerSec = w / dur;
-  const showLabels = state.settings.mode === 'beats' && pxPerSec * (60 / (state.bpm || 120)) * +state.settings.bpb > 36;
-  for (const m of state.markers) {
-    if (m.time < start || m.time > start + dur) continue;
-    const isCut = cutFrames.has(toFrame(m.time, rate(), state.settings.rounding));
-    const x = Math.round(xOf(m.time)) + 0.5;
-    ctx2d.strokeStyle = colors[m.kind];
-    ctx2d.lineWidth = m.kind === 'beat' ? 1 : 2;
-    ctx2d.globalAlpha = isCut ? (m.kind === 'beat' ? 0.85 : 1) : 0.25;
-    ctx2d.beginPath();
-    const inset = m.kind === 'beat' ? (h - top) * 0.18 : 0;
-    ctx2d.moveTo(x, top + inset);
-    ctx2d.lineTo(x, h - inset);
-    ctx2d.stroke();
-    ctx2d.globalAlpha = 1;
-    if (showLabels && m.kind === 'downbeat') {
-      ctx2d.fillStyle = colors.downbeat;
-      ctx2d.fillText(m.label.replace('Bar ', ''), x + 3, top + 12);
-    }
-  }
-
-  // Range: dim what's outside, edge lines inside.
-  if (state.range.in != null || state.range.out != null) {
-    const { inFrame, outFrame } = rangeFrames();
-    const a = xOf(frameSec(inFrame));
-    const b = xOf(frameSec(outFrame));
-    ctx2d.fillStyle = css('--dim');
-    if (a > 0) ctx2d.fillRect(0, top, Math.min(w, a), h - top);
-    if (b < w) ctx2d.fillRect(Math.max(0, b), top, w - Math.max(0, b), h - top);
-    ctx2d.fillStyle = css('--accent');
-    for (const x of [a, b]) if (x >= 0 && x <= w) ctx2d.fillRect(Math.round(x) - 1, top, 2, h - top);
-  }
-
-  // Playhead.
-  const px = xOf(audio.currentTime || 0);
-  if (px >= 0 && px <= w) {
-    ctx2d.fillStyle = css('--text');
-    ctx2d.fillRect(Math.round(px) - 1, 0, 2, h);
-  }
+  timeline.draw();
+  timeline.drawOverview();
 }
 
-function clampView() {
+function setView(v) {
   const total = state.buffer.duration;
-  state.view.dur = Math.min(total, Math.max(0.5, state.view.dur));
-  state.view.start = Math.min(total - state.view.dur, Math.max(0, state.view.start));
-}
-
-function zoomAt(factor, centerTime) {
-  if (!state.buffer) return;
-  const c = centerTime ?? state.view.start + state.view.dur / 2;
-  const rel = (c - state.view.start) / state.view.dur;
-  state.view.dur *= factor;
-  state.view.start = c - rel * state.view.dur;
-  clampView();
+  const dur = Math.min(total, Math.max(0.5, v.dur));
+  state.view = { start: Math.min(total - dur, Math.max(0, v.start)), dur };
   draw();
 }
 
-const timeAtX = (clientX) => {
-  const r = canvas.getBoundingClientRect();
-  return state.view.start + ((clientX - r.left) / r.width) * state.view.dur;
-};
-
-canvas.addEventListener('wheel', (e) => {
+function zoom(k) {
   if (!state.buffer) return;
-  e.preventDefault();
-  if (e.ctrlKey || e.metaKey) {
-    zoomAt(Math.exp(e.deltaY * 0.01), timeAtX(e.clientX));
-  } else {
-    const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-    state.view.start += (d / canvas.clientWidth) * state.view.dur;
-    clampView();
-    draw();
-  }
-}, { passive: false });
+  const c = player.playing || (player.time >= state.view.start && player.time <= state.view.start + state.view.dur) ? player.time : state.view.start + state.view.dur / 2;
+  const dur = state.view.dur * k;
+  setView({ start: c - (c - state.view.start) * k, dur });
+}
 
-canvas.addEventListener('click', (e) => {
-  if (!state.buffer) return;
-  const t = timeAtX(e.clientX);
-  if (e.shiftKey) toggleMarkerAt(t, 6);
-  else { seek(t); draw(); }
-});
-
-// ---------- playback ----------
+function fitView() {
+  if (state.buffer) setView({ start: 0, dur: state.buffer.duration });
+}
 
 function seek(t) {
-  audio.currentTime = Math.max(0, t);
-  state.lastPlayTime = audio.currentTime;
+  player.seek(t);
   updateTime();
+  draw();
 }
 
 function togglePlay() {
-  if (!state.buffer) return;
-  audioCtx?.resume();
-  if (audio.paused) audio.play(); else audio.pause();
+  if (!player?.buffer) return;
+  if (player.playing) player.pause();
+  else player.play(player.time >= player.duration - 0.05 ? 0 : player.time);
+  syncPlayButton();
+  if (player.playing) requestAnimationFrame(tick);
 }
 
-audio.addEventListener('play', () => {
-  $('play').textContent = '❚❚ Pause';
-  state.lastPlayTime = audio.currentTime;
-  requestAnimationFrame(tick);
-});
-audio.addEventListener('pause', () => { $('play').textContent = '▶ Play'; draw(); });
-audio.addEventListener('ended', () => { $('play').textContent = '▶ Play'; });
+function toggleClick() {
+  if (!player) return;
+  player.clickOn = !player.clickOn;
+  $('clickToggle').setAttribute('aria-pressed', String(player.clickOn));
+}
+
+function syncPlayButton() {
+  $('play').textContent = player.playing ? '❚❚' : '▶';
+  $('play').setAttribute('aria-label', player.playing ? 'Pause' : 'Play');
+}
 
 function tick() {
-  const now = audio.currentTime;
-  if (state.click && now > state.lastPlayTime) {
-    const downs = new Set(state.markers.filter((m) => m.kind === 'downbeat').map((m) => toFrame(m.time, rate(), state.settings.rounding)));
-    state.plan.cuts.forEach((f, i) => {
-      const t = state.cutTimes[i];
-      if (t > state.lastPlayTime && t <= now) playClick(downs.has(f));
-    });
-  }
-  state.lastPlayTime = now;
+  const t = player.time;
   const { start, dur } = state.view;
-  if (now > start + dur * 0.92 || now < start) {
-    state.view.start = now - dur * 0.1;
-    clampView();
-  }
+  if (t > start + dur * 0.92 || t < start) setView({ start: t - dur * 0.1, dur });
   updateTime();
   draw();
-  if (!audio.paused) requestAnimationFrame(tick);
-}
-
-function playClick(accent) {
-  const t = audioCtx.currentTime;
-  const osc = audioCtx.createOscillator();
-  const g = audioCtx.createGain();
-  osc.frequency.value = accent ? 1760 : 1100;
-  g.gain.setValueAtTime(accent ? 0.5 : 0.3, t);
-  g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
-  osc.connect(g).connect(audioCtx.destination);
-  osc.start(t);
-  osc.stop(t + 0.06);
+  if (player.playing) requestAnimationFrame(tick);
+  else syncPlayButton();
 }
 
 function updateTime() {
-  $('time').textContent = fmtTime(audio.currentTime || 0);
+  const t = player?.time ?? 0;
+  $('time').textContent = timecode(Math.floor(t * fpsNum() + 1e-6), rate());
 }
 
-// ---------- misc ----------
+// ---------- misc UI ----------
+
+function setBusy(msg, error) {
+  $('empty').hidden = false;
+  for (const id of ['timelineCard', 'analysisCard', 'planCard']) $(id).hidden = true;
+  $('emptySub').innerHTML = msg ? `<span class="busy"><span class="spinner"></span>${msg}</span>` : error;
+}
+
+function showWorkspace() {
+  $('empty').hidden = true;
+  for (const id of ['timelineCard', 'analysisCard', 'planCard']) $(id).hidden = false;
+  for (const id of ['play', 'clickToggle', 'exportXml', 'exportXml2']) $(id).disabled = false;
+  syncPlayButton();
+  updateTime();
+  refresh();
+}
 
 function fmtTime(t) {
   const m = Math.floor(t / 60);
-  const s = t - m * 60;
-  return `${String(m).padStart(2, '0')}:${s.toFixed(2).padStart(5, '0')}`;
+  return `${m}:${(t - m * 60).toFixed(2).padStart(5, '0')}`;
 }
 function fmtDur(t) {
   return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
@@ -711,48 +840,48 @@ function toast(msg) {
   el.textContent = msg;
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3600);
 }
 
 function initDrop() {
-  const drop = $('drop');
   $('file').addEventListener('change', (e) => loadFile(e.target.files[0]));
-  for (const ev of ['dragenter', 'dragover']) {
-    drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); });
-  }
-  for (const ev of ['dragleave', 'drop']) drop.addEventListener(ev, () => drop.classList.remove('over'));
-  // The drop itself is handled on window, so dropping anywhere on the page works.
-  window.addEventListener('dragover', (e) => e.preventDefault());
-  window.addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
+  const zones = [$('empty'), $('fileBtn')];
+  window.addEventListener('dragover', (e) => { e.preventDefault(); zones.forEach((z) => z.classList.add('over')); });
+  window.addEventListener('dragleave', (e) => { if (!e.relatedTarget) zones.forEach((z) => z.classList.remove('over')); });
+  window.addEventListener('drop', (e) => {
+    e.preventDefault();
+    zones.forEach((z) => z.classList.remove('over'));
+    if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+  });
 }
 
 function initKeys() {
   window.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'e') { e.preventDefault(); exportXml(); return; }
     if (e.target.closest('input, select, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key.toLowerCase();
-    if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
-    else if (k === 't') tapTempo();
-    else if (!state.buffer) return;
-    else if (k === 'm') { state.edits.added.push(audio.currentTime); refresh(); }
-    else if (k === 'i') setRangeEdge('in');
-    else if (k === 'o') setRangeEdge('out');
-    else if (k === 'x') clearRange();
-    else if (k === '+' || k === '=') zoomAt(0.5);
-    else if (k === '-') zoomAt(2);
+    if (e.code === 'Space') { e.preventDefault(); togglePlay(); return; }
+    if (k === 't') { tapTempo(); return; }
+    if (!state.o) return;
+    const actions = {
+      arrowleft: () => jumpCut(-1),
+      arrowright: () => jumpCut(1),
+      m: () => { state.edits.added.push(player.time); refresh(); },
+      d: barOneAtPlayhead,
+      i: () => setRangeEdge('in'),
+      o: () => setRangeEdge('out'),
+      x: clearRange,
+      c: toggleClick,
+      '[': () => nudge(-10),
+      ']': () => nudge(10),
+      '+': () => zoom(0.5),
+      '=': () => zoom(0.5),
+      '-': () => zoom(2),
+      '\\': fitView,
+    };
+    if (actions[k]) { e.preventDefault(); actions[k](); }
   });
 }
-
-$('play').addEventListener('click', togglePlay);
-$('clickToggle').addEventListener('click', () => {
-  state.click = !state.click;
-  $('clickToggle').setAttribute('aria-pressed', String(state.click));
-  audioCtx?.resume();
-});
-$('zoomIn').addEventListener('click', () => zoomAt(0.5));
-$('zoomOut').addEventListener('click', () => zoomAt(2));
-$('zoomFit').addEventListener('click', () => { if (state.buffer) { state.view = { start: 0, dur: state.buffer.duration }; draw(); } });
-window.addEventListener('resize', draw);
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw);
 
 // Installed app: offline cache, and audio files opened with Beatline from Finder.
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
@@ -764,8 +893,11 @@ if ('launchQueue' in window) {
   });
 }
 
+window.addEventListener('resize', draw);
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { timeline.invalidateColors(); draw(); });
+
 loadSettings();
 initControls();
 initDrop();
 initKeys();
-draw();
+detectServer();

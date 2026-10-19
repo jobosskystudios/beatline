@@ -1,16 +1,28 @@
 // Beat analysis, pure JS so it runs in the browser and under Node tests.
 //
 // Pipeline:
-//   1. onsetEnvelope  – log-magnitude spectral flux (full band + bass band)
-//   2. estimateTempo  – autocorrelation of the envelope with a tempo prior
-//   3. trackBeats     – dynamic-programming beat tracker (Ellis 2007)
-//   4. downbeatPhase  – which beat of the bar carries the most bass energy
+//   1. onsetEnvelope  – mel-band spectral flux with a loudness knee, plus
+//                       per-band envelopes (kick / snare / hat) and loudness
+//   2. tempoProfile   – windowed autocorrelation (tempogram) of the envelope
+//   3. estimateTempo  – tempogram peak under a log-normal prior around 120 BPM
+//   4. trackBeats     – dynamic-programming beat tracker (Ellis 2007)
 //   5. pickOnsets     – peak picking for "hit" markers (transients, not grid)
+//
+// Timing is calibrated so a detected beat lands on the audible attack
+// (within a few ms on synthetic drums; see tests/dsp.test.js).
 
 const ANALYSIS_RATE = 22050;
 const N_FFT = 1024;
 const HOP = 256;
-const LOW_HZ = 150;
+const N_MELS = 64;
+const SILENCE_BELOW_DB = 35;
+const COMPRESS_DB = 50;
+
+// Mel bands per role, by centre frequency (Hz).
+const KICK_MAX = 150;
+const SNARE = [150, 3000];
+const HAT_MIN = 5000;
+const COLOR_SPLIT = [250, 2500]; // waveform colouring: low | mid | high
 
 export function toMono(channels) {
   if (channels.length === 1) return channels[0];
@@ -22,8 +34,8 @@ export function toMono(channels) {
   return out;
 }
 
-function decimate(x, sr) {
-  const factor = Math.max(1, Math.floor(sr / ANALYSIS_RATE));
+export function decimate(x, sr, target = ANALYSIS_RATE) {
+  const factor = Math.max(1, Math.floor(sr / target));
   if (factor === 1) return { x, sr };
   const n = Math.floor(x.length / factor);
   const y = new Float32Array(n);
@@ -36,7 +48,7 @@ function decimate(x, sr) {
   return { x: y, sr: sr / factor };
 }
 
-function makeFFT(n) {
+export function makeFFT(n) {
   const levels = Math.log2(n);
   const rev = new Uint32Array(n);
   for (let i = 0; i < n; i++) {
@@ -76,18 +88,10 @@ function makeFFT(n) {
   };
 }
 
-function detrend(env, radius) {
-  const n = env.length;
-  const out = new Float32Array(n);
-  let sum = 0;
-  let lo = 0;
-  let hi = -1;
-  for (let i = 0; i < n; i++) {
-    while (hi < Math.min(n - 1, i + radius)) sum += env[++hi];
-    while (lo < i - radius) sum -= env[lo++];
-    out[i] = Math.max(0, env[i] - sum / (hi - lo + 1));
-  }
-  return out;
+export function hann(n) {
+  const w = new Float64Array(n);
+  for (let i = 0; i < n; i++) w[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n);
+  return w;
 }
 
 function normalize(env) {
@@ -98,22 +102,52 @@ function normalize(env) {
   return env;
 }
 
+// Triangular mel filterbank (HTK mel scale) over FFT power bins.
+function melBank(nFft, sr, nMels, fMin, fMax) {
+  const mel = (f) => 2595 * Math.log10(1 + f / 700);
+  const hz = (m) => 700 * (10 ** (m / 2595) - 1);
+  const bins = nFft / 2 + 1;
+  const pts = [];
+  for (let i = 0; i < nMels + 2; i++) pts.push(hz(mel(fMin) + ((mel(fMax) - mel(fMin)) * i) / (nMels + 1)));
+  const bank = [];
+  for (let m = 0; m < nMels; m++) {
+    const [a, c, b] = [pts[m], pts[m + 1], pts[m + 2]];
+    const w = [];
+    for (let k = 0; k < bins; k++) {
+      const f = (k * sr) / nFft;
+      const v = f <= a || f >= b ? 0 : f <= c ? (f - a) / (c - a) : (b - f) / (b - c);
+      if (v > 0) w.push([k, v]);
+    }
+    if (!w.length) w.push([Math.min(bins - 1, Math.round((c * nFft) / sr)), 1]);
+    bank.push({ w, center: c });
+  }
+  return bank;
+}
+
 export function onsetEnvelope(samples, sampleRate) {
   const { x, sr } = decimate(samples, sampleRate);
   const pad = N_FFT / 2;
   const nFrames = Math.floor(x.length / HOP) + 1;
   const fft = makeFFT(N_FFT);
-  const win = new Float64Array(N_FFT);
-  for (let i = 0; i < N_FFT; i++) win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N_FFT);
-  const bins = N_FFT / 2 + 1;
-  const lowBins = Math.max(2, Math.round((LOW_HZ * N_FFT) / sr));
+  const win = hann(N_FFT);
+  const bank = melBank(N_FFT, sr, N_MELS, 30, Math.min(8000, sr / 2));
+  const inBand = (lo, hi) => bank.map((b) => b.center >= lo && b.center < hi);
+  const roles = {
+    kick: inBand(0, KICK_MAX),
+    snare: inBand(SNARE[0], SNARE[1]),
+    hat: inBand(HAT_MIN, Infinity),
+    c0: inBand(0, COLOR_SPLIT[0]),
+    c1: inBand(COLOR_SPLIT[0], COLOR_SPLIT[1]),
+    c2: inBand(COLOR_SPLIT[1], Infinity),
+  };
+  const count = (mask) => Math.max(1, mask.filter(Boolean).length);
+
   const re = new Float64Array(N_FFT);
   const im = new Float64Array(N_FFT);
-  let prev = new Float64Array(bins);
-  let cur = new Float64Array(bins);
-  const env = new Float32Array(nFrames);
-  const low = new Float32Array(nFrames);
-
+  const pow = new Float64Array(N_FFT / 2 + 1);
+  const S = new Float32Array(nFrames * N_MELS);
+  const rmsDb = new Float32Array(nFrames);
+  let maxE = 1e-20;
   for (let f = 0; f < nFrames; f++) {
     const start = f * HOP - pad;
     for (let i = 0; i < N_FFT; i++) {
@@ -122,54 +156,144 @@ export function onsetEnvelope(samples, sampleRate) {
       im[i] = 0;
     }
     fft(re, im);
-    let flux = 0;
-    let lowFlux = 0;
-    for (let k = 0; k < bins; k++) {
-      cur[k] = Math.log1p(100 * Math.hypot(re[k], im[k]));
-      const d = cur[k] - prev[k];
-      if (f > 0 && d > 0) {
-        flux += d;
-        if (k < lowBins) lowFlux += d;
-      }
+    let total = 0;
+    for (let k = 0; k < pow.length; k++) { pow[k] = re[k] * re[k] + im[k] * im[k]; total += pow[k]; }
+    rmsDb[f] = 10 * Math.log10(total / (N_FFT * N_FFT) + 1e-12);
+    for (let m = 0; m < N_MELS; m++) {
+      let e = 0;
+      for (const [k, v] of bank[m].w) e += pow[k] * v;
+      S[f * N_MELS + m] = e;
+      if (e > maxE) maxE = e;
     }
-    env[f] = flux;
-    low[f] = lowFlux;
-    const t = prev; prev = cur; cur = t;
   }
+
+  // Log compression with a knee COMPRESS_DB below the loudest band: like dB
+  // for the music, but hiss and room tone far below it stay near zero.
+  const gamma = 10 ** (COMPRESS_DB / 10) / maxE;
+  for (let i = 0; i < S.length; i++) S[i] = Math.log1p(gamma * S[i]);
+
+  const env = new Float32Array(nFrames);
+  const out = { kick: new Float32Array(nFrames), snare: new Float32Array(nFrames), hat: new Float32Array(nFrames) };
+  const bands = new Float32Array(nFrames * 3);
+  for (let f = 0; f < nFrames; f++) {
+    const sums = { all: 0, kick: 0, snare: 0, hat: 0 };
+    const col = [0, 0, 0];
+    for (let m = 0; m < N_MELS; m++) {
+      const v = S[f * N_MELS + m];
+      col[roles.c0[m] ? 0 : roles.c1[m] ? 1 : 2] += v;
+      if (f === 0) continue;
+      const d = v - S[(f - 1) * N_MELS + m];
+      if (d <= 0) continue;
+      sums.all += d;
+      if (roles.kick[m]) sums.kick += d;
+      if (roles.snare[m]) sums.snare += d;
+      if (roles.hat[m]) sums.hat += d;
+    }
+    bands[f * 3] = col[0] / count(roles.c0);
+    bands[f * 3 + 1] = col[1] / count(roles.c1);
+    bands[f * 3 + 2] = col[2] / count(roles.c2);
+    // Flux peaks about one hop before the audible attack; store it one frame
+    // later so frame times line up with what you hear.
+    if (f + 1 < nFrames) {
+      env[f + 1] = sums.all / N_MELS;
+      out.kick[f + 1] = sums.kick / count(roles.kick);
+      out.snare[f + 1] = sums.snare / count(roles.snare);
+      out.hat[f + 1] = sums.hat / count(roles.hat);
+    }
+  }
+
+  // Frames this far below the loud parts are silence: no beats, no hits.
+  const sorted = Float32Array.from(rmsDb).sort();
+  const silenceDb = sorted[Math.floor(sorted.length * 0.95)] - SILENCE_BELOW_DB;
+  const active = new Uint8Array(nFrames);
+  for (let f = 0; f < nFrames; f++) active[f] = rmsDb[f] > silenceDb ? 1 : 0;
+
   return {
-    env: normalize(detrend(env, 8)),
-    low: normalize(detrend(low, 8)),
+    env: normalize(env),
+    low: normalize(out.kick),
+    kick: out.kick,
+    snare: normalize(out.snare),
+    hat: normalize(out.hat),
+    bands,
+    rmsDb,
+    active,
     hopTime: HOP / sr,
   };
 }
 
-export function estimateTempo(env, hopTime, { minBpm = 60, maxBpm = 200, prior = 120 } = {}) {
+// Windowed autocorrelation of the onset envelope, summed over the song.
+// acc[lag] is high when beats repeat every `lag` frames.
+export function tempoProfile(env, hopTime, { minBpm = 50, maxBpm = 220, winSec = 8 } = {}) {
   const n = env.length;
   const minLag = Math.max(1, Math.floor(60 / (maxBpm * hopTime)));
-  const maxLag = Math.min(n - 2, Math.ceil(60 / (minBpm * hopTime)));
-  if (maxLag <= minLag) return prior;
-  const score = new Float64Array(maxLag + 2);
-  for (let lag = minLag - 1; lag <= maxLag + 1; lag++) {
-    if (lag < 1) continue;
-    let s = 0;
-    for (let i = lag; i < n; i++) s += env[i] * env[i - lag];
-    const bpm = 60 / (lag * hopTime);
-    const w = Math.exp(-0.5 * (Math.log2(bpm / prior) / 0.9) ** 2);
-    score[lag] = (s / (n - lag)) * w;
+  const maxLag = Math.max(minLag + 1, Math.min(n - 2, Math.ceil(60 / (minBpm * hopTime))));
+  const acc = new Float64Array(maxLag + 2);
+  const W = Math.min(n, Math.max(maxLag * 2, Math.round(winSec / hopTime)));
+  const step = Math.max(1, Math.floor(W / 4));
+  const w = hann(W);
+  const seg = new Float64Array(W);
+  // Full windows only (a zero-padded tail window skews short songs).
+  for (let s0 = 0; s0 + W <= n; s0 += step) {
+    for (let i = 0; i < W; i++) seg[i] = env[s0 + i] * w[i];
+    let z = 0;
+    for (let i = 0; i < W; i++) z += seg[i] * seg[i];
+    if (z > 1e-9) {
+      for (let lag = Math.max(1, minLag - 1); lag <= maxLag + 1; lag++) {
+        let s = 0;
+        for (let i = lag; i < W; i++) s += seg[i] * seg[i - lag];
+        acc[lag] += s / z;
+      }
+    }
   }
-  let best = minLag;
-  for (let lag = minLag; lag <= maxLag; lag++) if (score[lag] > score[best]) best = lag;
-  // Parabolic interpolation for sub-frame lag precision.
-  let lag = best;
+  return { acc, minLag, maxLag };
+}
+
+export const tempoPrior = (bpm, prior = 120, octaves = 1) => Math.exp(-0.5 * (Math.log2(bpm / prior) / octaves) ** 2);
+
+// Sub-frame peak position by parabolic interpolation.
+export function refineLag(score, best) {
   const a = score[best - 1] ?? 0;
   const b = score[best];
   const c = score[best + 1] ?? 0;
   const denom = a - 2 * b + c;
-  if (best > 1 && denom < 0) lag = best + (0.5 * (a - c)) / denom;
-  return 60 / (lag * hopTime);
+  return best > 1 && denom < 0 ? best + (0.5 * (a - c)) / denom : best;
 }
 
-export function trackBeats(env, hopTime, bpm, tightness = 100) {
+export function estimateTempo(env, hopTime, { minBpm = 50, maxBpm = 220, prior = 120 } = {}) {
+  const { acc, minLag, maxLag } = tempoProfile(env, hopTime, { minBpm, maxBpm });
+  const score = new Float64Array(acc.length);
+  for (let lag = Math.max(1, minLag - 1); lag < acc.length; lag++) score[lag] = acc[lag] * tempoPrior(60 / (lag * hopTime), prior);
+  let best = minLag;
+  for (let lag = minLag; lag <= maxLag; lag++) if (score[lag] > score[best]) best = lag;
+  return 60 / (refineLag(score, best) * hopTime);
+}
+
+// Pick the metrical level an editor would tap along to. Below 90 BPM, if the
+// halfway points between beats carry nearly as much attack as the beats,
+// the faster tempo is the real pulse; above 170 BPM, if every other beat is
+// much weaker, the slower one is.
+export function resolveOctave(env, hopTime, bpm, active = null) {
+  const at = (t) => {
+    let m = 0;
+    for (let j = t - 2; j <= t + 2; j++) m = Math.max(m, env[j] ?? 0);
+    return m;
+  };
+  const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+  if (bpm < 90) {
+    const b = trackBeats(env, hopTime, bpm, 100, active);
+    const on = mean(b.map(at));
+    const mid = mean(b.slice(1).map((f, i) => at(Math.round((f + b[i]) / 2))));
+    if (on > 0 && mid / on >= 0.35) return bpm * 2;
+  } else if (bpm > 170) {
+    const b = trackBeats(env, hopTime, bpm, 100, active);
+    const even = mean(b.filter((_, i) => i % 2 === 0).map(at));
+    const odd = mean(b.filter((_, i) => i % 2 === 1).map(at));
+    if (Math.min(even, odd) / Math.max(even, odd, 1e-9) < 0.45) return bpm / 2;
+  }
+  return bpm;
+}
+
+export function trackBeats(env, hopTime, bpm, tightness = 100, active = null) {
   const n = env.length;
   const period = 60 / (bpm * hopTime);
   if (!(period > 1) || n < 2) return [];
@@ -226,18 +350,19 @@ export function trackBeats(env, hopTime, bpm, tightness = 100) {
   for (let t = end; t >= 0; t = back[t]) beats.push(t);
   beats.reverse();
 
-  // Trim weak beats at the edges (silence before/after the music).
+  // Trim beats at the edges that sit on silence or on nothing at all.
   let sq = 0;
   for (const v of local) sq += v * v;
-  // Low enough that quiet intros and outros keep their beats.
   const thr = 0.35 * Math.sqrt(sq / n);
+  const weak = (f) => local[f] < thr || (active && !active[f]);
   let s = 0;
   let e = beats.length;
-  while (s < e && local[beats[s]] < thr) s++;
-  while (e > s && local[beats[e - 1]] < thr) e--;
+  while (s < e && weak(beats[s])) s++;
+  while (e > s && weak(beats[e - 1])) e--;
   return beats.slice(s, e);
 }
 
+// Simple downbeat guess from bass energy alone (analysis.js has the full one).
 export function downbeatPhase(beatFrames, low, beatsPerBar) {
   if (beatsPerBar <= 1 || !beatFrames.length) return 0;
   const sums = new Float64Array(beatsPerBar);
@@ -255,7 +380,7 @@ export function downbeatPhase(beatFrames, low, beatsPerBar) {
   return best;
 }
 
-export function pickOnsets(env, hopTime, sensitivity = 0.5, minGapSec = 0.08) {
+export function pickOnsets(env, hopTime, sensitivity = 0.5, minGapSec = 0.08, active = null) {
   const n = env.length;
   const w = 3;
   const avgW = 12;
@@ -269,7 +394,7 @@ export function pickOnsets(env, hopTime, sensitivity = 0.5, minGapSec = 0.08) {
     for (let j = Math.max(0, t - w); j <= Math.min(n - 1, t + w); j++) {
       if (env[j] > v) { isMax = false; break; }
     }
-    if (!isMax) continue;
+    if (!isMax || (active && !active[t])) continue;
     let sum = 0;
     let cnt = 0;
     for (let j = Math.max(0, t - avgW); j <= Math.min(n - 1, t + avgW); j++) { sum += env[j]; cnt++; }
@@ -288,20 +413,18 @@ export function hitEnvelope(env, low) {
   return out;
 }
 
-// One-shot analysis. Keep the returned envelope around: re-tracking with a
+// One-shot analysis. Keep the returned envelopes around: re-tracking with a
 // different BPM or strictness only needs trackBeats(), not a new FFT pass.
 export function analyze(samples, sampleRate, opts = {}) {
-  const { env, low, hopTime } = onsetEnvelope(samples, sampleRate);
-  const bpm = opts.bpm > 0 ? opts.bpm : estimateTempo(env, hopTime, opts);
-  const frames = trackBeats(env, hopTime, bpm, opts.tightness ?? 100);
+  const o = onsetEnvelope(samples, sampleRate);
+  const bpm = opts.bpm > 0 ? opts.bpm : resolveOctave(o.env, o.hopTime, estimateTempo(o.env, o.hopTime, opts), o.active);
+  const frames = trackBeats(o.env, o.hopTime, bpm, opts.tightness ?? 100, o.active);
   return {
-    env,
-    low,
-    hopTime,
+    ...o,
     bpm,
     beatFrames: frames,
-    beats: frames.map((f) => f * hopTime),
-    phase: downbeatPhase(frames, low, opts.beatsPerBar ?? 4),
-    onsets: pickOnsets(hitEnvelope(env, low), hopTime, opts.sensitivity ?? 0.5),
+    beats: frames.map((f) => f * o.hopTime),
+    phase: downbeatPhase(frames, o.low, opts.beatsPerBar ?? 4),
+    onsets: pickOnsets(hitEnvelope(o.env, o.low), o.hopTime, opts.sensitivity ?? 0.5, 0.08, o.active),
   };
 }

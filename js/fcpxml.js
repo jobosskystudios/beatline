@@ -64,7 +64,7 @@ export function fileUrl(folder, fileName) {
 
 // Snap markers to frames, drop duplicates (first in priority order wins).
 export function snapMarkers(markers, rate, rounding, styles) {
-  const priority = { section: 0, downbeat: 1, manual: 2, beat: 3, hit: 4 };
+  const priority = { section: 0, downbeat: 1, manual: 2, beat: 3, kick: 4, snare: 5, hit: 6, hat: 7 };
   const byFrame = new Map();
   [...markers]
     .filter((m) => styles[m.kind] && styles[m.kind] !== 'none')
@@ -115,7 +115,7 @@ export function buildFcpxml(opts) {
   if (opts.target !== 'gap') {
     const sr = Math.round(song.sampleRate);
     resources.push(
-      `        <asset id="r2" name="${escapeXml(song.name)}" start="0s" duration="${rational(Math.round(song.duration * sr), sr)}" hasAudio="1" audioSources="1" audioChannels="${song.channels}">`,
+      `        <asset id="r2" name="${escapeXml(song.name)}" start="0s" duration="${rational(Math.round(song.duration * sr), sr)}" hasAudio="1" audioSources="1" audioChannels="${song.channels}"${song.audioRate ? ` audioRate="${song.audioRate}"` : ''}>`,
       `            <media-rep kind="original-media" src="${escapeXml(fileUrl(song.folder, song.fileName))}"/>`,
       `        </asset>`,
     );
@@ -173,7 +173,7 @@ const csvText = (s) => `"${String(s).replace(/"/g, '""')}"`;
 export function buildCsv(markers, fps, rounding) {
   const rate = FRAME_RATES[fps];
   const rows = [['index', 'seconds', 'frame', 'timecode', 'type', 'label']];
-  const all = { section: 'standard', beat: 'standard', downbeat: 'standard', hit: 'standard', manual: 'standard' };
+  const all = { section: 'standard', beat: 'standard', downbeat: 'standard', hit: 'standard', manual: 'standard', kick: 'standard', snare: 'standard', hat: 'standard' };
   snapMarkers(markers, rate, rounding, all).forEach((m, i) => {
     const sec = (m.frame * rate.num) / rate.den;
     rows.push([i + 1, sec.toFixed(4), m.frame, timecode(m.frame, rate), m.kind, csvText(m.label)]);

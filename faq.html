@@ -2,18 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Beatline FAQ</title>
-  <meta name="description" content="Answers to common Beatline questions: tempo, timing, importing into Final Cut Pro, privacy.">
+  <meta name="description" content="Answers to common Beatline questions: silent audio in Final Cut, tempo, timing, Final Cut's own beat detection, privacy.">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="index.html"><img src="icon.svg" alt="" width="26" height="26"> Beatline</a>
+    <a class="brand" href="index.html"><img src="icon.svg" alt="" width="24" height="24"> Beatline</a>
     <nav>
       <a href="index.html">App</a>
-      <a href="guide.html">FCP guide</a>
+      <a href="guide.html">Guide</a>
       <a href="how-it-works.html">How it works</a>
       <a href="faq.html" aria-current="page">FAQ</a>
     </nav>
@@ -22,44 +22,53 @@
   <main class="prose">
     <h1>FAQ</h1>
 
-    <h2>Is my music uploaded anywhere?</h2>
-    <p>No. Decoding, analysis and export all happen inside your browser tab. Only your settings (frame rate, folder path…) are remembered, in this browser.</p>
+    <h2>The project opens in Final Cut but the song is silent.</h2>
+    <p>Final Cut found the project but not the audio file, so the clip is offline (often red, no waveform). The FCPXML points at the song by its full path, and a browser can’t see where a file lives. Fixes:</p>
+    <ul>
+      <li>Start Beatline with <code>./beatline.command</code>. It finds the song on your Mac and shows <em>✓ Found</em> in the Export tab before you export.</li>
+      <li>Or type the folder yourself. Beatline refuses to export when it can confirm the folder is wrong.</li>
+      <li>Already imported? Select the clip in Final Cut and choose <strong>File › Relink Files…</strong>.</li>
+      <li>Don’t move or rename the song after exporting.</li>
+    </ul>
 
-    <h2>The tempo is double (or half) what it should be.</h2>
-    <p>Very common with half-time beats. Press <em>½×</em> or <em>2×</em>, or type the BPM you know into the tempo box.</p>
-
-    <h2>The markers feel slightly early or late.</h2>
-    <p>Use <em>Nudge all markers</em> (a few tens of ms is typical), or change <em>Snap to frame</em> to <em>Previous</em> or <em>Next</em>. Cutting a frame <em>before</em> the beat often feels tighter on screen.</p>
-
-    <h2>The song has a live drummer / tempo changes.</h2>
-    <p>Lower <em>Grid strictness</em> so the grid can drift with the band. For music with no steady pulse, switch to <em>Hits</em>.</p>
-
-    <h2>Final Cut says the media is missing.</h2>
-    <p>The path you typed doesn’t match where the song is. Select the clip and choose <strong>File › Relink Files…</strong>, or re-export with the correct folder. Spaces and special characters in names are fine.</p>
-
-    <h2>Final Cut won’t import the file.</h2>
-    <p>Pick an older FCPXML version under <em>Marker colours &amp; project options</em> (1.9 works with Final Cut Pro 10.5 and later). If it still fails, please open an issue with the FCP version and the error text.</p>
-
-    <h2>How is “total cuts” counted?</h2>
-    <p>Every marker inside your range that survives the shortest-shot limit is one cut. Shots = cuts + 1. Change the pacing, range or shortest shot and the numbers update straight away.</p>
-
-    <h2>The sections look wrong.</h2>
-    <p>Sections come from loudness only, so a quiet chorus or a loud verse can be classed differently than you’d label it. Use them as a pacing guide; the beat grid and markers don’t depend on them except in Auto pacing.</p>
-
-    <h2>Which frame rate should I choose?</h2>
-    <p>The frame rate of the Final Cut project you’ll cut in — check it in the project’s Inspector (<em>Modify › Project Properties</em>). Markers are snapped to that rate’s frames.</p>
+    <h2>The markers looked random on my song.</h2>
+    <p>The first version could lock onto the wrong tempo (for example 3/4 of the real one), and then the grid drifts in and out of the music. The current engine estimates tempo over many windows, checks half and double time, and shows a confidence badge. If it still looks off: try the tempo chips, press <kbd>D</kbd> on the real “one”, or tell us which song so we can add it to the test set.</p>
 
     <h2>Final Cut Pro 12 has beat detection built in. Why use this?</h2>
-    <p>If FCP’s built-in grid does what you need, use it! Beatline adds bar-aware labels, density choices (every bar, every 2 or 4 bars), hit detection, hand editing with a metronome check, frame-snapping control, and it works with older FCP versions.</p>
+    <p>Use whichever works for the song. What Beatline adds, based on what editors report about the built-in grid:</p>
+    <ul>
+      <li><strong>You can fix it.</strong> Tempo chips, bar 1 at the playhead, grid nudge, strictness for live bands. Final Cut’s grid can’t be adjusted.</li>
+      <li><strong>It tells you when it’s unsure</strong>, instead of drawing a confident-looking wrong grid.</li>
+      <li><strong>Not just 4/4.</strong> Waltzes (3/4) are detected automatically, and 5, 6 or 7 beats per bar can be set by hand; Apple’s guide recommends 4/4 material.</li>
+      <li><strong>It plans the edit:</strong> cut counts, shot list, energy-aware pacing, cut-downs, and a pre-cut timeline, not only grid lines.</li>
+      <li><strong>Drum markers:</strong> cut on kicks or snares, not only the beat.</li>
+      <li><strong>Works with older Final Cut versions</strong> and exports CSV for other editors.</li>
+    </ul>
+    <p>Some editors reported that the built-in markers in Final Cut 12.2 were further off than in 12.0 on the same songs. Beatline’s results don’t depend on Final Cut’s version.</p>
+
+    <h2>The tempo is double (or half) what I feel.</h2>
+    <p>Very common with half-time grooves. Click a tempo chip under the tempo, or type the BPM you want in the Beat grid tab.</p>
+
+    <h2>The cuts feel slightly late.</h2>
+    <p>Set <em>Cut early</em> to 1 or 2 frames (Cuts tab). Video often feels tighter when the cut lands just before the hit. To shift the beat grid itself, use <kbd>[</kbd> and <kbd>]</kbd>.</p>
+
+    <h2>Which frame rate should I choose?</h2>
+    <p>Your Final Cut project’s rate (<em>Modify › Project Properties</em>). Cuts are snapped to that rate’s frames.</p>
+
+    <h2>How is “total cuts” counted?</h2>
+    <p>Every cut inside your range that survives the shortest-shot limit. Shots = cuts + 1.</p>
+
+    <h2>The sections look wrong.</h2>
+    <p>Sections come from loudness only, so a quiet chorus can read as “calm”. Use them as a pacing guide.</p>
+
+    <h2>Is my music uploaded anywhere?</h2>
+    <p>No. Decoding, analysis and export happen on your Mac. The launcher’s file search runs locally and only answers Beatline itself.</p>
 
     <h2>Can I use the markers in Premiere Pro or DaVinci Resolve?</h2>
-    <p>Download the <em>.csv</em> marker list — it has seconds, frame numbers and timecode for each marker. Resolve can also import FCPXML; how it treats the markers depends on the Resolve version.</p>
+    <p>Download the marker list or shot list (.csv): seconds, frames and timecode for every cut.</p>
 
-    <h2>Which browsers work?</h2>
-    <p>Current Safari, Chrome, Edge and Firefox on macOS. FLAC decoding depends on the browser; WAV and AIFF are the safest.</p>
-
-    <h2>Can I use it as an app, offline?</h2>
-    <p>Yes. Clone the repository and run <code>./beatline.command</code> in Terminal (or double-click it in Finder). It opens Beatline in its own window. Then choose <em>Install Beatline</em> in Chrome or Edge, or <em>File › Add to Dock</em> in Safari, to keep it in the Dock. Once installed it works without internet.</p>
+    <h2>Can I use it offline, as an app?</h2>
+    <p>Yes. Run <code>./beatline.command</code>, then <em>Install Beatline</em> in Chrome or Edge, or <em>File › Add to Dock</em> in Safari.</p>
   </main>
 
   <footer class="site-footer"><a href="index.html">Open Beatline →</a></footer>

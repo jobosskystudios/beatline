@@ -3,7 +3,7 @@
 import { toFrame } from './fcpxml.js';
 import { sectionAt } from './structure.js';
 
-export const CUT_KINDS = new Set(['beat', 'downbeat', 'hit', 'manual']);
+export const CUT_KINDS = new Set(['beat', 'downbeat', 'hit', 'manual', 'kick', 'snare', 'hat']);
 
 export function planCuts({ markers, rate, rounding, inFrame, outFrame, minShotFrames = 1, sections = [] }) {
   const frames = [...new Set(
