@@ -32,6 +32,20 @@ Everything runs in the browser — no install, no upload, no dependencies.
 - Export the song clip with markers, a pre-cut timeline, or a markers-only gap clip; FCPXML 1.9 / 1.10 / 1.11
 - CSV marker list (seconds, frame, timecode) for other editors
 
+## Open it as an app
+
+```sh
+git clone https://github.com/jobosskystudios/beatline.git
+cd beatline
+./beatline.command        # or: npm run app
+```
+
+The launcher serves Beatline on `http://127.0.0.1:8765` and opens it in its own window (Chrome, Edge, Brave or Arc in app mode; Safari otherwise). Keep the Terminal window open while you work; **Ctrl+C** quits. In Finder you can also double-click `beatline.command`.
+
+To keep it in the Dock: in Chrome/Edge choose **Install Beatline** (the install icon in the address bar, or ⋮ › Cast, save and share › Install page as app); in Safari choose **File › Add to Dock**. Once installed it works offline, and Chrome/Edge can open audio files with it from Finder (right-click › Open With › Beatline).
+
+Needs `python3` (on a Mac: `xcode-select --install` if it's missing). Options: `BEATLINE_PORT=9000` picks another port, `BEATLINE_NO_OPEN=1` only starts the server.
+
 ## Run it
 
 Open it from any static host (GitHub Pages: *Settings → Pages → Deploy from branch → main / root*), or locally:
@@ -54,6 +68,8 @@ The tests generate synthetic drum loops (90–150 BPM) and check tempo, beat pos
 
 ```
 index.html, guide.html, how-it-works.html, faq.html, styles.css, icon.svg
+beatline.command  launcher: local server + app window
+manifest.webmanifest, sw.js, icons/  installable app, offline cache
 js/dsp.js       beat analysis (pure functions, no DOM)
 js/markers.js   beats → marker list (pacing, bars, user edits)
 js/structure.js bars, energy sections, drop

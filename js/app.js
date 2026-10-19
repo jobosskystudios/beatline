@@ -754,6 +754,16 @@ $('zoomFit').addEventListener('click', () => { if (state.buffer) { state.view = 
 window.addEventListener('resize', draw);
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw);
 
+// Installed app: offline cache, and audio files opened with Beatline from Finder.
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('sw.js').catch(() => { /* not available here */ });
+}
+if ('launchQueue' in window) {
+  window.launchQueue.setConsumer(async (params) => {
+    if (params.files?.length) loadFile(await params.files[0].getFile());
+  });
+}
+
 loadSettings();
 initControls();
 initDrop();
