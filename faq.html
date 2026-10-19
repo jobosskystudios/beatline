@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Beatline FAQ</title>
+  <meta name="description" content="Answers to common Beatline questions: tempo, timing, importing into Final Cut Pro, privacy.">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="index.html"><img src="icon.svg" alt="" width="26" height="26"> Beatline</a>
+    <nav>
+      <a href="index.html">App</a>
+      <a href="guide.html">FCP guide</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="faq.html" aria-current="page">FAQ</a>
+    </nav>
+  </header>
+
+  <main class="prose">
+    <h1>FAQ</h1>
+
+    <h2>Is my music uploaded anywhere?</h2>
+    <p>No. Decoding, analysis and export all happen inside your browser tab. Only your settings (frame rate, folder path…) are remembered, in this browser.</p>
+
+    <h2>The tempo is double (or half) what it should be.</h2>
+    <p>Very common with half-time beats. Press <em>½×</em> or <em>2×</em>, or type the BPM you know into the tempo box.</p>
+
+    <h2>The markers feel slightly early or late.</h2>
+    <p>Use <em>Nudge all markers</em> (a few tens of ms is typical), or change <em>Snap to frame</em> to <em>Previous</em> or <em>Next</em>. Cutting a frame <em>before</em> the beat often feels tighter on screen.</p>
+
+    <h2>The song has a live drummer / tempo changes.</h2>
+    <p>Lower <em>Grid strictness</em> so the grid can drift with the band. For music with no steady pulse, switch to <em>Hits</em>.</p>
+
+    <h2>Final Cut says the media is missing.</h2>
+    <p>The path you typed doesn’t match where the song is. Select the clip and choose <strong>File › Relink Files…</strong>, or re-export with the correct folder. Spaces and special characters in names are fine.</p>
+
+    <h2>Final Cut won’t import the file.</h2>
+    <p>Pick an older FCPXML version under <em>More export options</em> (1.9 works with Final Cut Pro 10.5 and later). If it still fails, please open an issue with the FCP version and the error text.</p>
+
+    <h2>Which frame rate should I choose?</h2>
+    <p>The frame rate of the Final Cut project you’ll cut in — check it in the project’s Inspector (<em>Modify › Project Properties</em>). Markers are snapped to that rate’s frames.</p>
+
+    <h2>Final Cut Pro 12 has beat detection built in. Why use this?</h2>
+    <p>If FCP’s built-in grid does what you need, use it! Beatline adds bar-aware labels, density choices (every bar, every 2 or 4 bars), hit detection, hand editing with a metronome check, frame-snapping control, and it works with older FCP versions.</p>
+
+    <h2>Can I use the markers in Premiere Pro or DaVinci Resolve?</h2>
+    <p>Download the <em>.csv</em> marker list — it has seconds, frame numbers and timecode for each marker. Resolve can also import FCPXML; how it treats the markers depends on the Resolve version.</p>
+
+    <h2>Which browsers work?</h2>
+    <p>Current Safari, Chrome, Edge and Firefox on macOS. FLAC decoding depends on the browser; WAV and AIFF are the safest.</p>
+
+    <h2>Can I use it offline?</h2>
+    <p>Yes — clone or download the repository and run <code>python3 -m http.server</code> in its folder, then open <code>http://localhost:8000</code>. There are no dependencies.</p>
+  </main>
+
+  <footer class="site-footer"><a href="index.html">Open Beatline →</a></footer>
+</body>
+</html>

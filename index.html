@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Beatline – Beat markers for Final Cut Pro</title>
+  <meta name="description" content="Detect beats in a song and export Final Cut Pro markers (FCPXML) for beat-synced rough cuts. Runs entirely in your browser.">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="index.html"><img src="icon.svg" alt="" width="26" height="26"> Beatline</a>
+    <nav>
+      <a href="index.html" aria-current="page">App</a>
+      <a href="guide.html">FCP guide</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="faq.html">FAQ</a>
+    </nav>
+  </header>
+
+  <main class="app">
+    <section>
+      <div class="panel">
+        <label class="drop" id="drop">
+          <input type="file" id="file" accept="audio/*,.wav,.aif,.aiff,.mp3,.m4a,.aac,.flac" hidden>
+          <strong id="dropTitle">Drop a song here</strong>
+          <span id="dropSub">or click to choose · WAV, AIFF, MP3, M4A, FLAC · nothing is uploaded</span>
+        </label>
+
+        <div class="stats">
+          <div class="stat"><b id="sBpm">–</b><span>BPM</span></div>
+          <div class="stat"><b id="sBeats">–</b><span>beats found</span></div>
+          <div class="stat"><b id="sMarkers">–</b><span>markers to export</span></div>
+          <div class="stat"><b id="sDur">–</b><span>duration</span></div>
+        </div>
+
+        <div class="wave-wrap">
+          <canvas id="wave" aria-label="Waveform with beat markers"></canvas>
+          <div class="wave-empty" id="waveEmpty">Waveform and markers appear here</div>
+        </div>
+
+        <div class="transport">
+          <button id="play" disabled title="Play / pause (Space)">▶ Play</button>
+          <button id="clickToggle" aria-pressed="false" disabled title="Metronome click on every marker">🔔 Click</button>
+          <span class="time" id="time">00:00.00</span>
+          <button id="zoomOut" disabled title="Zoom out (−)">−</button>
+          <button id="zoomFit" disabled title="Show whole song">Fit</button>
+          <button id="zoomIn" disabled title="Zoom in (+)">+</button>
+        </div>
+        <div class="legend">
+          <span><i style="background:var(--downbeat)"></i>Downbeat (bar start)</span>
+          <span><i style="background:var(--beat)"></i>Beat</span>
+          <span><i style="background:var(--hit)"></i>Hit</span>
+          <span><i style="background:var(--manual)"></i>Added by you</span>
+        </div>
+        <p class="hint">Click the waveform to seek. <kbd>Shift</kbd>+click adds or removes a marker. <kbd>M</kbd> adds a marker at the playhead, <kbd>Space</kbd> plays. Scroll to pan, <kbd>Ctrl</kbd>/pinch to zoom.</p>
+      </div>
+    </section>
+
+    <aside>
+      <div class="panel">
+        <h2>Detect</h2>
+        <div class="field">
+          <span>Mark</span>
+          <div class="seg" id="mode">
+            <button data-v="beats" aria-pressed="true">Beat grid</button>
+            <button data-v="hits" aria-pressed="false">Hits</button>
+          </div>
+        </div>
+
+        <div data-for="beats">
+          <div class="field">
+            <span>Tempo (BPM) — leave blank for auto</span>
+            <div class="inline">
+              <input type="number" id="bpm" min="30" max="300" step="0.01" placeholder="auto">
+              <button id="half" title="Halve tempo">½×</button>
+              <button id="double" title="Double tempo">2×</button>
+            </div>
+          </div>
+          <div class="field">
+            <span>Grid strictness <output id="tightOut"></output></span>
+            <input type="range" id="tight" min="1" max="10" step="1" value="6">
+          </div>
+          <p class="note">Higher keeps an even grid; lower lets markers follow a drifting (live) tempo.</p>
+          <div class="row">
+            <label class="field"><span>Beats per bar</span>
+              <select id="bpb"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option><option>7</option></select>
+            </label>
+            <div class="field"><span>Downbeat</span>
+              <div class="inline"><button id="phaseL" title="Move bar start one beat earlier">◀</button><button id="phaseR" title="Move bar start one beat later">▶</button></div>
+            </div>
+          </div>
+          <label class="field"><span>Markers</span>
+            <select id="density"></select>
+          </label>
+        </div>
+
+        <div data-for="hits" hidden>
+          <div class="field">
+            <span>Sensitivity <output id="sensOut"></output></span>
+            <input type="range" id="sens" min="0" max="1" step="0.05" value="0.5">
+          </div>
+          <p class="note">Hits are individual transients (drums, plucks, stabs) — handy for accent cuts.</p>
+        </div>
+
+        <label class="field"><span>Nudge all markers (ms)</span>
+          <input type="number" id="offset" step="5" value="0">
+        </label>
+        <button id="resetEdits" class="wide" disabled>Undo my marker edits</button>
+      </div>
+
+      <div class="panel">
+        <h2>Export to Final Cut Pro</h2>
+        <div class="row">
+          <label class="field"><span>Frame rate</span>
+            <select id="fps"></select>
+          </label>
+          <label class="field"><span>Snap to frame</span>
+            <select id="rounding"><option value="nearest">Nearest</option><option value="previous">Previous</option><option value="next">Next</option></select>
+          </label>
+        </div>
+        <label class="field"><span>Downbeat markers</span><select id="styleDown" class="style"></select></label>
+        <label class="field"><span>Beat &amp; hit markers</span><select id="styleBeat" class="style"></select></label>
+
+        <div class="field">
+          <span>Export as</span>
+          <div class="seg" id="target">
+            <button data-v="clip" aria-pressed="true">Song + markers</button>
+            <button data-v="gap" aria-pressed="false">Markers only</button>
+          </div>
+        </div>
+        <div data-for="clip">
+          <label class="field"><span>Folder the song is in on your Mac</span>
+            <input type="text" id="folder" placeholder="/Users/you/Music" spellcheck="false">
+          </label>
+          <p class="note">Finder: select the folder, hold <kbd>⌥</kbd>, right-click → <em>Copy … as Pathname</em>. If it’s wrong, use <em>File › Relink Files</em> in FCP.</p>
+        </div>
+        <p class="note" data-for="gap" hidden>Creates a gap clip carrying the markers. Put your song under it and snap to them.</p>
+
+        <details>
+          <summary>More export options</summary>
+          <div class="row">
+            <label class="field"><span>Project format</span>
+              <select id="res"><option value="1080p">1080p HD</option><option value="4k">4K UHD</option><option value="720p">720p</option><option value="vertical">Vertical 1080×1920</option><option value="square">Square 1080×1080</option></select>
+            </label>
+            <label class="field"><span>FCPXML version</span>
+              <select id="version"><option value="1.9">1.9 (FCP 10.5)</option><option value="1.10" selected>1.10 (FCP 10.6+)</option><option value="1.11">1.11 (FCP 10.7+)</option></select>
+            </label>
+          </div>
+          <label class="field"><span>Event name</span><input type="text" id="eventName" value="Beatline"></label>
+        </details>
+
+        <button id="exportXml" class="primary wide" disabled>Download .fcpxml</button>
+        <button id="exportCsv" class="wide" disabled style="margin-top:8px">Download marker list (.csv)</button>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="site-footer">Beatline runs entirely in your browser — your audio never leaves your computer.</footer>
+  <div class="toast" id="toast" role="status"></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

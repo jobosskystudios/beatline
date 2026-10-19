@@ -1,0 +1,11 @@
+{
+  "name": "beatline",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Detect beats in a song and export Final Cut Pro markers (FCPXML) for beat-synced rough cuts.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "start": "python3 -m http.server 8080"
+  }
+}

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Beat Cut Guide – Beatline</title>
+  <meta name="description" content="Step-by-step: mark a song's beats with Beatline and cut a beat-synced rough cut in Final Cut Pro.">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="index.html"><img src="icon.svg" alt="" width="26" height="26"> Beatline</a>
+    <nav>
+      <a href="index.html">App</a>
+      <a href="guide.html" aria-current="page">FCP guide</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="faq.html">FAQ</a>
+    </nav>
+  </header>
+
+  <main class="prose">
+    <h1>Cut a rough cut to the beat in Final Cut Pro</h1>
+    <p class="lede">From song to a beat-synced rough cut in about ten minutes: mark the music in Beatline, import the markers, then let snapping do the timing.</p>
+
+    <h2>1. Mark the song</h2>
+    <ol class="steps">
+      <li><strong>Keep the song where it will stay.</strong> The exported file points at the song’s location on your Mac, so move it into your project folder <em>before</em> exporting.</li>
+      <li><strong>Drop the song into <a href="index.html">Beatline</a>.</strong> It finds the tempo and beat grid in a second or two.</li>
+      <li><strong>Check by ear.</strong> Turn on <em>🔔 Click</em> and press <kbd>Space</kbd>. The click should land on the kick/snare.
+        <ul>
+          <li>Click twice as fast or half as fast as the song feels? Use <em>½×</em> or <em>2×</em>.</li>
+          <li>Bar numbers start on the wrong beat? Move the downbeat with <em>◀ ▶</em>.</li>
+          <li>Live band or drifting tempo? Lower <em>Grid strictness</em>.</li>
+          <li>Markers feel a hair late? Use <em>Nudge</em> (e.g. −20 ms) or <em>Snap to frame: Previous</em>.</li>
+        </ul>
+      </li>
+      <li><strong>Pick a density for the cut you want.</strong>
+        <table>
+          <tr><th>Style of edit</th><th>Markers</th></tr>
+          <tr><td>Fast montage, sports, hype</td><td>Every beat or every 2nd beat</td></tr>
+          <tr><td>Music video, event recap</td><td>Every bar</td></tr>
+          <tr><td>Slow, emotional, wedding film</td><td>Every 2 or 4 bars</td></tr>
+          <tr><td>Accent cuts on drum hits</td><td>Mode: Hits</td></tr>
+        </table>
+      </li>
+      <li><strong>Edit by hand where needed.</strong> <kbd>Shift</kbd>+click the waveform to add or remove a marker; press <kbd>M</kbd> while playing to tap one in. Your markers export as red to-do markers so you can spot them.</li>
+      <li><strong>Export.</strong> Set the frame rate to match your FCP project, choose <em>Song + markers</em>, paste the song’s folder path and click <em>Download .fcpxml</em>.</li>
+    </ol>
+
+    <div class="callout">Getting the folder path: in Finder select the folder, hold <kbd>⌥ Option</kbd>, right-click, and choose <em>Copy “…” as Pathname</em>. Paste it into Beatline — it’s remembered for next time.</div>
+
+    <h2>2. Bring it into Final Cut Pro</h2>
+    <ol class="steps">
+      <li><strong>File › Import › XML…</strong> and choose the downloaded <code>.fcpxml</code> (or just drag it onto the FCP window).</li>
+      <li>Pick your library. Beatline creates an event (default <em>Beatline</em>) with a project named <em>“Song – beats”</em>. Open it: the song sits in the timeline with every marker on it.</li>
+      <li>If the clip shows as missing media, select it and use <strong>File › Relink Files…</strong> to point at the song.</li>
+      <li><strong>Make the song a connected clip</strong> so video can go in the primary storyline: select it and choose <strong>Edit › Lift from Storyline</strong> (<kbd>⌥⌘↑</kbd>). The markers move with it.</li>
+    </ol>
+
+    <h2>3. Cut to the markers</h2>
+    <ol class="steps">
+      <li><strong>Turn snapping on</strong> (<kbd>N</kbd>). Playhead, skimmer, edits and range selections now snap to markers.</li>
+      <li><strong>Jump marker to marker</strong> with <kbd>⌃'</kbd> (next) and <kbd>⌃;</kbd> (previous).</li>
+      <li><strong>Fill each beat gap:</strong> put the playhead on a marker and press <kbd>I</kbd>, jump to the next marker and press <kbd>O</kbd>. Then mark the start of a shot in the browser (<kbd>I</kbd>) and press <kbd>D</kbd> (Overwrite) — FCP fills exactly the marked range in the timeline.</li>
+      <li><strong>Faster rough version:</strong> lay down your selects end to end, then trim each edit point to the nearest marker — with snapping on they click into place.</li>
+      <li>Open the Timeline Index (<kbd>⇧⌘2</kbd> → <em>Tags</em>) to see and jump to every marker by name (“Bar 12”, “Bar 12 · Beat 3”…).</li>
+    </ol>
+
+    <h2>Markers-only export</h2>
+    <p>Prefer not to type a folder path? Choose <em>Markers only</em>. The project then contains a gap clip carrying the markers. Drag your song under it as a connected clip starting at 0, and snap your edits to the gap’s markers.</p>
+
+    <h2>Handy Final Cut Pro shortcuts</h2>
+    <table>
+      <tr><th>Action</th><th>Shortcut</th></tr>
+      <tr><td>Snapping on/off</td><td><kbd>N</kbd></td></tr>
+      <tr><td>Next / previous marker</td><td><kbd>⌃'</kbd> / <kbd>⌃;</kbd></td></tr>
+      <tr><td>Add marker</td><td><kbd>M</kbd></td></tr>
+      <tr><td>Set range start / end</td><td><kbd>I</kbd> / <kbd>O</kbd></td></tr>
+      <tr><td>Overwrite / Insert / Append / Connect</td><td><kbd>D</kbd> / <kbd>W</kbd> / <kbd>E</kbd> / <kbd>Q</kbd></td></tr>
+      <tr><td>Blade at playhead / blade all</td><td><kbd>⌘B</kbd> / <kbd>⇧⌘B</kbd></td></tr>
+      <tr><td>Lift from storyline</td><td><kbd>⌥⌘↑</kbd></td></tr>
+    </table>
+    <p class="hint">Shortcuts are Final Cut Pro defaults; your own command set may differ.</p>
+  </main>
+
+  <footer class="site-footer"><a href="index.html">Open Beatline →</a></footer>
+</body>
+</html>

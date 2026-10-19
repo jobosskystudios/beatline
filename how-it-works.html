@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How Beatline Works</title>
+  <meta name="description" content="The beat detection and FCPXML export behind Beatline, explained.">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="index.html"><img src="icon.svg" alt="" width="26" height="26"> Beatline</a>
+    <nav>
+      <a href="index.html">App</a>
+      <a href="guide.html">FCP guide</a>
+      <a href="how-it-works.html" aria-current="page">How it works</a>
+      <a href="faq.html">FAQ</a>
+    </nav>
+  </header>
+
+  <main class="prose">
+    <h1>How Beatline works</h1>
+    <p class="lede">Everything runs in your browser with plain JavaScript — no upload, no server, no machine-learning model. Here’s the pipeline.</p>
+
+    <h2>1. Decode</h2>
+    <p>The browser’s Web Audio API decodes the file (WAV, AIFF, MP3, M4A/AAC, and FLAC where supported). Channels are averaged to mono and downsampled to about 22 kHz — plenty for finding rhythm.</p>
+
+    <h2>2. Onset envelope: “how much new sound just started?”</h2>
+    <p>The audio is cut into overlapping 46 ms windows every 11.6 ms. Each window goes through an FFT, magnitudes are log-compressed, and Beatline sums how much each frequency got <em>louder</em> than in the previous window (<em>spectral flux</em>). Drum hits, plucks and chord changes make tall spikes. A second envelope does the same for the bass band only (below 150 Hz) — that’s where kick drums live.</p>
+
+    <h2>3. Tempo</h2>
+    <p>The onset envelope is compared with delayed copies of itself (<em>autocorrelation</em>). Delays that line up spike-with-spike reveal the beat period. A gentle preference for tempos near 120 BPM settles the classic “is it 70 or 140?” ambiguity; if it picks the wrong one, <em>½×</em> and <em>2×</em> fix it.</p>
+
+    <h2>4. Beat grid</h2>
+    <p>Beatline uses dynamic-programming beat tracking (Ellis, 2007): it searches for the sequence of beat times that lands on strong onsets <em>and</em> keeps the spacing close to the tempo. <em>Grid strictness</em> sets how much each beat may deviate — high for click-tracked pop and EDM, low for live recordings. Weak beats in silent intros and outros are trimmed.</p>
+
+    <h2>5. Downbeats</h2>
+    <p>For each possible bar alignment, Beatline averages the bass-band energy on the beats that would be “beat 1”. The alignment with the most kick wins. Wrong guess? Shift it with the <em>◀ ▶</em> buttons.</p>
+
+    <h2>6. Hits</h2>
+    <p>In <em>Hits</em> mode, Beatline skips the grid and marks individual peaks in the onset envelope that rise clearly above their surroundings, at least 80 ms apart. <em>Sensitivity</em> lowers or raises that bar.</p>
+
+    <h2>7. Frame-exact FCPXML</h2>
+    <p>Final Cut Pro stores time as exact fractions of a second. Each marker is snapped to a whole frame of your project rate, then written as a fraction — at 23.976 fps, frame <em>n</em> is <code>n × 1001/24000 s</code>. Two markers that land on the same frame are merged (downbeats win).</p>
+<pre>&lt;fcpxml version="1.10"&gt;
+  &lt;resources&gt;
+    &lt;format id="r1" name="FFVideoFormat1080p2398" frameDuration="1001/24000s" …/&gt;
+    &lt;asset id="r2" name="Song" …&gt;
+      &lt;media-rep kind="original-media" src="file:///Users/you/Music/Song.wav"/&gt;
+    &lt;/asset&gt;
+  &lt;/resources&gt;
+  &lt;library&gt;&lt;event name="Beatline"&gt;&lt;project name="Song – beats"&gt;
+    &lt;sequence format="r1" …&gt;&lt;spine&gt;
+      &lt;asset-clip ref="r2" offset="0s" …&gt;
+        &lt;chapter-marker start="1001/2000s" duration="1001/24000s" value="Bar 1"/&gt;
+        &lt;marker start="1001/1000s" duration="1001/24000s" value="Bar 1 · Beat 2"/&gt;
+        …</pre>
+    <table>
+      <tr><th>Beatline style</th><th>Written as</th><th>Shows in FCP as</th></tr>
+      <tr><td>Standard</td><td><code>&lt;marker …/&gt;</code></td><td>Blue marker</td></tr>
+      <tr><td>To-do</td><td><code>&lt;marker … completed="0"/&gt;</code></td><td>Red to-do</td></tr>
+      <tr><td>Completed</td><td><code>&lt;marker … completed="1"/&gt;</code></td><td>Green completed to-do</td></tr>
+      <tr><td>Chapter</td><td><code>&lt;chapter-marker …/&gt;</code></td><td>Orange chapter marker</td></tr>
+    </table>
+
+    <h2>Accuracy</h2>
+    <p>On steady music (pop, EDM, hip-hop, rock with a drummer on a click), the grid typically lands within a frame. Expect to help it with rubato piano, orchestral swells, heavy swing, or tempo changes — lower the strictness, use Hits mode, or add markers by hand.</p>
+  </main>
+
+  <footer class="site-footer"><a href="index.html">Open Beatline →</a></footer>
+</body>
+</html>
