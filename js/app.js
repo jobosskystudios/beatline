@@ -7,6 +7,7 @@ import { planCuts, sectionSummary } from './cutplan.js';
 import { Player } from './player.js';
 import { createTimeline, computePeaks, bandNorms } from './timeline.js';
 import { readAudioInfo, readMovieInfo } from './fileinfo.js';
+import { parseLocation } from './paths.js';
 import { detectSwing, detectAccents, speechPhrases, thoroughGrid, strongestHits, snapToHits } from './insights.js';
 import { planMusicEdit, barChromaFromBeats, renderEdit, encodeWav } from './musicedit.js';
 import { assignClips } from './clips.js';
@@ -152,6 +153,7 @@ function initControls() {
   $('copyXml').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText($('xmlText').value); toast('Copied FCPXML'); } catch { $('xmlText').select(); toast('Press ⌘C to copy'); }
   });
+  $('folder').addEventListener('input', renderResolved);
   $('folder').addEventListener('change', verifyFolder);
   $('sectionTable').addEventListener('click', onRowClick);
   $('shotTable').addEventListener('click', onRowClick);
@@ -441,7 +443,7 @@ async function locateSong() {
     const { paths } = await api(`api/locate?name=${encodeURIComponent(state.file.name)}&size=${state.file.size}`);
     if (paths.length) {
       state.locate = { status: 'found', paths };
-      $('folder').value = state.settings.folder = dirname(paths[0]);
+      $('folder').value = state.settings.folder = paths[0];
       saveSettings();
     } else {
       state.locate = { status: 'notfound', paths: [] };
@@ -454,12 +456,32 @@ async function locateSong() {
 
 async function verifyFolder() {
   if (!state.server || !state.file) return renderLocate();
-  const path = `${$('folder').value.trim().replace(/\/+$/, '')}/${state.file.name}`;
+  const loc = songLocation();
+  if (loc.error) return renderLocate();
+  const path = loc.full;
   try {
     const { exists, size } = await api(`api/exists?path=${encodeURIComponent(path)}`);
     state.locate = { status: exists && size === state.file.size ? 'found' : 'missing', paths: exists ? [path] : [] };
   } catch { /* keep previous */ }
   renderLocate();
+}
+
+// Where the song is, from the Export tab box (folder or full file path).
+function songLocation() {
+  return parseLocation($('folder').value, state.file?.name ?? '');
+}
+
+function renderResolved() {
+  const el = $('folderResolved');
+  if (!state.file) { el.textContent = ''; return; }
+  const loc = songLocation();
+  if (loc.error) {
+    el.innerHTML = loc.error === 'empty' ? '' : `<span class="bad">${loc.error}</span>`;
+    return;
+  }
+  const other = loc.pointsToFile && loc.fileName !== state.file.name;
+  el.innerHTML = `Final Cut will open: <code>${loc.full.replace(/[<&]/g, (c) => (c === '<' ? '&lt;' : '&amp;'))}</code>` +
+    (other ? `<br><span class="bad">That’s a different file from the one open here (${state.file.name}).</span>` : '');
 }
 
 function renderLocate() {
@@ -468,12 +490,13 @@ function renderLocate() {
     idle: 'Open a song first.',
     searching: '<span class="busy"><span class="spinner"></span>Looking for the song on your Mac…</span>',
     found: `<span class="ok">✓ Found on your Mac${paths.length > 1 ? ` (${paths.length} copies, using the newest)` : ''}</span>`,
-    notfound: '<span class="bad">Couldn’t find this file on your Mac.</span> Type its folder below.',
-    missing: '<span class="bad">✗ That folder doesn’t contain this song.</span> Final Cut would show it offline.',
-    unavailable: 'Browsers can’t see where a file lives. Type its folder below, or run <code>./beatline.command</code> and Beatline finds it for you.',
+    notfound: '<span class="bad">Couldn’t find this file on your Mac.</span> Paste its location below.',
+    missing: '<span class="bad">✗ No song at that location.</span> Final Cut would show it offline.',
+    unavailable: 'In a browser tab Beatline can’t see where the song is saved: paste its location below. (Started with <code>beatline.command</code>, it finds it for you.)',
   }[status];
   $('locateStatus').innerHTML = msg;
   $('locatePath').textContent = status === 'found' ? paths[0] : '';
+  renderResolved();
 }
 
 // ---------- range ----------
@@ -789,15 +812,16 @@ function exportXml() {
   if (!state.plan) return;
   const s = state.settings;
   if (s.target !== 'gap') {
-    if (!s.folder.trim().startsWith('/')) {
+    const loc = songLocation();
+    if (loc.error) {
       showTab('export');
-      toast('Add the song’s folder (starts with /) so Final Cut can play it, or export Markers only');
+      toast(loc.error === 'empty' ? 'Paste where the song is on your Mac (Export tab) so Final Cut can play it' : loc.error);
       $('folder').focus();
       return;
     }
     if (state.locate.status === 'missing') {
       showTab('export');
-      toast('That folder doesn’t contain the song: Final Cut would import it silent. Fix the folder first.');
+      toast('There’s no song at that location: Final Cut would import it silent. Fix the location first.');
       $('folder').focus();
       return;
     }
@@ -834,8 +858,8 @@ function exportXml() {
     muteClips: s.muteClips,
     song: {
       name,
-      fileName: state.file.name,
-      folder: s.folder.trim(),
+      fileName: songLocation().fileName,
+      folder: songLocation().folder,
       duration: state.buffer.duration,
       sampleRate: state.buffer.sampleRate,
       audioRate: state.audioInfo?.sampleRate,
@@ -1005,8 +1029,9 @@ async function locateClips() {
 
 function clipFolderFor(c) {
   if (c.folder) return c.folder;
-  const base = $('clipsPath').value.trim().replace(/\/+$/, '');
-  if (!base.startsWith('/')) return '';
+  const parsed = parseLocation($('clipsPath').value);
+  if (parsed.error) return '';
+  const base = parsed.pointsToFile ? parsed.folder : parsed.full;
   const sub = c.relPath.includes('/') ? c.relPath.split('/').slice(1, -1).join('/') : '';
   return sub ? `${base}/${sub}` : base;
 }
@@ -1042,8 +1067,8 @@ function timelineMarkersSnapped() {
 function songInfo() {
   return {
     name: songBase(),
-    fileName: state.file.name,
-    folder: state.settings.folder.trim(),
+    fileName: songLocation().fileName,
+    folder: songLocation().folder,
     duration: state.buffer.duration,
     channels: state.audioInfo?.channels ?? state.buffer.numberOfChannels,
     audioRate: state.audioInfo?.sampleRate,
@@ -1052,9 +1077,9 @@ function songInfo() {
 
 function exportPremiere() {
   if (!state.plan) return;
-  if (!state.settings.folder.trim().startsWith('/')) {
+  if (songLocation().error) {
     showTab('export');
-    toast('Add the song’s folder so Premiere can link it');
+    toast('Paste where the song is on your Mac (Export tab) so Premiere can link it');
     return;
   }
   const res = RESOLUTIONS[state.settings.res];

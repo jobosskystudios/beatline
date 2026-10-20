@@ -337,10 +337,11 @@
             <span id="locateStatus">Open a song first.</span>
             <span class="path" id="locatePath"></span>
           </div>
-          <label class="field"><span>Folder on your Mac</span>
-            <input type="text" id="folder" placeholder="/Users/you/Music" spellcheck="false">
+          <label class="field"><span>Where the song is on your Mac</span>
+            <input type="text" id="folder" placeholder="/Users/you/Music/Song.mp3" spellcheck="false">
           </label>
-          <p class="note">Final Cut links the song by this path. Wrong path = silent, offline clip. In Finder: select the folder, hold <kbd>⌥</kbd>, right-click › <em>Copy … as Pathname</em>.</p>
+          <p class="note" id="folderResolved"></p>
+          <p class="note">In Finder, right-click the song, hold <kbd>⌥ Option</kbd>, choose <em>Copy “…” as Pathname</em>, and paste it here. Quotes are fine; a folder works too.</p>
         </div>
         <div class="group">
           <div class="row">

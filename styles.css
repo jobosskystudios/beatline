@@ -225,6 +225,7 @@ table.data tr.clickable:hover td { background: var(--panel-2); }
 .locate { display: grid; gap: 6px; font-size: 12px; padding: 10px; border-radius: 8px; background: var(--panel-2); }
 .locate .ok { color: var(--ok); }
 .locate .bad { color: var(--bad); }
+#folderResolved code { word-break: break-all; }
 .locate .path { font-family: var(--mono); font-size: 11px; word-break: break-all; color: var(--muted); }
 #xmlText { font: 11px/1.4 var(--mono); resize: vertical; }
 

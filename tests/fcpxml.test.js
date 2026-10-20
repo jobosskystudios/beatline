@@ -80,3 +80,16 @@ test('CSV export', () => {
   const csv = buildCsv([{ time: 1, kind: 'beat', label: 'a "b"' }], '25', 'nearest');
   assert.equal(csv.split('\n')[1], '1,1.0000,25,00:00:01:00,beat,"a ""b"""');
 });
+
+test('song location accepts what people paste', async () => {
+  const { parseLocation } = await import('../js/paths.js');
+  const want = { folder: '/Users/divakar/Desktop/beat mark test', fileName: 'Vazhithunaiye.mp3', full: '/Users/divakar/Desktop/beat mark test/Vazhithunaiye.mp3', pointsToFile: true };
+  assert.deepEqual(parseLocation("'/Users/divakar/Desktop/beat mark test/Vazhithunaiye.mp3'", 'Vazhithunaiye.mp3'), want);
+  assert.deepEqual(parseLocation('"/Users/divakar/Desktop/beat mark test/Vazhithunaiye.mp3"'), want);
+  assert.deepEqual(parseLocation('/Users/divakar/Desktop/beat\\ mark\\ test/Vazhithunaiye.mp3 '), want);
+  assert.deepEqual(parseLocation('Users/divakar/Desktop/beat mark test/Vazhithunaiye.mp3'), want);
+  assert.deepEqual(parseLocation('file:///Users/divakar/Desktop/beat%20mark%20test/Vazhithunaiye.mp3'), want);
+  assert.deepEqual(parseLocation('/Users/divakar/Desktop/beat mark test/', 'Vazhithunaiye.mp3'), { ...want, pointsToFile: false });
+  assert.match(parseLocation('~/Music', 'a.mp3').error, /full path/);
+  assert.equal(parseLocation('', 'a.mp3').error, 'empty');
+});
