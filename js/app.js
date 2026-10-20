@@ -7,7 +7,7 @@ import { planCuts, sectionSummary } from './cutplan.js';
 import { Player } from './player.js';
 import { createTimeline, computePeaks, bandNorms } from './timeline.js';
 import { readAudioInfo, readMovieInfo } from './fileinfo.js';
-import { detectSwing, detectAccents, speechPhrases, thoroughGrid } from './insights.js';
+import { detectSwing, detectAccents, speechPhrases, thoroughGrid, strongestHits, snapToHits } from './insights.js';
 import { planMusicEdit, barChromaFromBeats, renderEdit, encodeWav } from './musicedit.js';
 import { assignClips } from './clips.js';
 import { buildPremiereXml, buildResolveEdl } from './exports.js';
@@ -20,14 +20,14 @@ const DEFAULTS = {
   mode: 'beats', density: 'bar', tight: '6', sens: '0.5', minShot: '0.5', lead: '0',
   autoLow: AUTO_DEFAULT.low, autoMid: AUTO_DEFAULT.mid, autoHigh: AUTO_DEFAULT.high,
   drumKick: true, drumSnare: true, drumHat: false,
-  minPause: '0.3', clipOrder: 'name', clipUse: 'start', muteClips: true,
+  minPause: '0.3', clipOrder: 'name', clipUse: 'start', muteClips: true, hitPick: 'all', hitRate: '12', snapHits: false,
   fps: '23.976', rounding: 'nearest', styleSection: 'chapter', styleDown: 'standard', styleBeat: 'standard', styleAccent: 'todo',
   target: 'clip', folder: '', res: '1080p', version: '1.10', eventName: 'Beatline',
 };
 const SETTING_IDS = ['density', 'tight', 'sens', 'minShot', 'lead', 'autoLow', 'autoMid', 'autoHigh', 'fps', 'rounding',
-  'styleSection', 'styleDown', 'styleBeat', 'styleAccent', 'folder', 'res', 'version', 'eventName', 'minPause', 'clipOrder', 'clipUse'];
+  'styleSection', 'styleDown', 'styleBeat', 'styleAccent', 'folder', 'res', 'version', 'eventName', 'minPause', 'clipOrder', 'clipUse', 'hitPick', 'hitRate'];
 const DRUM_IDS = { drumKick: 'kick', drumSnare: 'snare', drumHat: 'hat' };
-const CHECKBOX_IDS = [...Object.keys(DRUM_IDS), 'muteClips'];
+const CHECKBOX_IDS = [...Object.keys(DRUM_IDS), 'muteClips', 'snapHits'];
 
 const state = {
   settings: { ...DEFAULTS },
@@ -193,6 +193,8 @@ function updateVisibility() {
   }
   for (const el of document.querySelectorAll('[data-for-density]')) el.hidden = s.density !== el.dataset.forDensity;
   for (const el of document.querySelectorAll('[data-mode-only]')) el.hidden = el.dataset.modeOnly !== s.mode;
+  $('hitRateField').hidden = s.hitPick !== 'strong';
+  if (s.mode === 'hits') $('sensField').hidden = s.hitPick === 'strong';
   $('tightOut').textContent = `(${s.tight}/10)`;
   $('sensOut').textContent = `(${Math.round(s.sens * 100)}%)`;
 }
@@ -201,7 +203,7 @@ function onSetting(id) {
   updateVisibility();
   if (!state.o) return;
   if (id === 'tight') retrack(false);
-  else if (id === 'sens') { detectHits(); refresh(); }
+  else if (id === 'sens' || id === 'hitPick' || id === 'hitRate') { detectHits(); refresh(); }
   else if (id === 'fps') { refresh(); updateTime(); }
   else if (id === 'minPause') { state.phrases = speechPhrases(state.o, { minPause: +state.settings.minPause || 0.3 }); refresh(); }
   else refresh();
@@ -347,8 +349,12 @@ function onBeatDrag(i, t, ripple, done) {
 }
 
 function detectHits() {
-  const sens = +state.settings.sens;
-  state.onsets = pickOnsets(hitEnvelope(state.o.env, state.o.low), state.o.hopTime, sens, 0.08, state.o.active);
+  const s = state.settings;
+  const sens = +s.sens;
+  const env = hitEnvelope(state.o.env, state.o.low);
+  state.onsets = s.hitPick === 'strong'
+    ? strongestHits(env, state.o.hopTime, { perMinute: +s.hitRate || 12, active: state.o.active })
+    : pickOnsets(env, state.o.hopTime, sens, 0.08, state.o.active);
   if (state.drums) state.drums = drumHits(state.o, sens);
 }
 
@@ -589,6 +595,7 @@ function refresh() {
     sections: state.sections,
     autoMap: { low: s.autoLow, mid: s.autoMid, high: s.autoHigh },
     swingRatio: state.swing.ratio,
+    adjust: s.snapHits && s.mode === 'beats' ? (list) => snapToHits(list, hitEnvelope(state.o.env, state.o.low), state.o.hopTime) : null,
   });
   const total = placeSegments();
   const tlMarkers = state.markers.map((m) => ({ ...m, time: toTimeline(m.time) })).filter((m) => m.time != null);

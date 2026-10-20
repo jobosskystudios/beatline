@@ -220,3 +220,25 @@ test('estimateTempo is unaffected by the new modules (sanity)', () => {
   const { o } = groove({ bpm: 100 });
   assert.ok(Math.abs(estimateTempo(o.env, o.hopTime) - 100) < 2);
 });
+
+test('strongest hits keeps only the biggest events', async () => {
+  const { strongestHits } = await import('../js/insights.js');
+  const x = new Float32Array(SR * 30);
+  for (let i = 0; i < 60; i++) addAt(x, 0.5 + i * 0.48, 0.2, kick, 0.25); // steady quiet beat
+  for (const t of [5.3, 13.0, 21.4]) addAt(x, t, 0.5, (u) => rnd() * Math.exp(-u * 6), 1.8); // three slams
+  const o = onsetEnvelope(x, SR);
+  const hits = strongestHits(o.env, o.hopTime, { perMinute: 6, active: o.active });
+  assert.equal(hits.length, 3);
+  [5.3, 13.0, 21.4].forEach((t, i) => assert.ok(Math.abs(hits[i] - t) < 0.02, `hit ${hits[i]} vs ${t}`));
+});
+
+test('grid cuts snap onto a nearby attack, but not across empty space', async () => {
+  const { snapToHits } = await import('../js/insights.js');
+  const x = new Float32Array(SR * 6);
+  for (const t of [1.04, 2.04, 3.04, 4.04]) addAt(x, t, 0.3, kick, 0.9); // hits 40 ms after the grid
+  const o = onsetEnvelope(x, SR);
+  const grid = [1, 2, 3, 4, 5].map((t) => ({ time: t, kind: 'beat', label: '' }));
+  const out = snapToHits(grid, o.env, o.hopTime, 0.06);
+  out.slice(0, 4).forEach((m, i) => assert.ok(Math.abs(m.time - (i + 1.04)) < 0.012, `snapped to ${m.time}`));
+  assert.equal(out[4].time, 5); // nothing near 5 s: stays on the grid
+});

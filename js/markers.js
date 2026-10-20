@@ -28,7 +28,7 @@ export const DRUM_LABEL = { kick: 'Kick', snare: 'Snare', hat: 'Hi-hat' };
 
 const SUBDIV = { eighth: 2, triplet: 3 };
 
-export function buildMarkers({ mode, beats, onsets, drums, drumKinds = ['kick', 'snare'], phrases = [], phase = 0, beatsPerBar = 4, density = 'beat', offset = 0, edits, sections, autoMap = AUTO_DEFAULT, swingRatio = 0.5 }) {
+export function buildMarkers({ mode, beats, onsets, drums, drumKinds = ['kick', 'snare'], phrases = [], phase = 0, beatsPerBar = 4, density = 'beat', offset = 0, edits, sections, autoMap = AUTO_DEFAULT, swingRatio = 0.5, adjust = null }) {
   let list = [];
   if (mode === 'phrases') {
     list = phrases.map((p, i) => ({ time: p.time, kind: 'phrase', label: `Phrase ${i + 1}` }));
@@ -61,6 +61,8 @@ export function buildMarkers({ mode, beats, onsets, drums, drumKinds = ['kick', 
     });
   }
   list = list.map((m) => ({ ...m, time: m.time + offset }));
+  // e.g. snapping to hits; runs before your edits so Shift+click sees final times.
+  if (adjust) list = adjust(list);
   if (edits) {
     list = list.filter((m) => !edits.removed.has(markerKey(m.time)));
     for (const t of edits.added) list.push({ time: t, kind: 'manual', label: 'Marker' });

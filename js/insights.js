@@ -192,3 +192,44 @@ export function thoroughGrid(env, hopTime, bpm, active, trackBeats, tightnessVal
   }
   return best;
 }
+
+// ---------- strongest hits & snapping ----------
+
+// The song's biggest hits: onset peaks ranked by strength, at most `perMinute`
+// of them, at least `minGap` seconds apart (the drops and slams you'd cut on).
+export function strongestHits(env, hopTime, { perMinute = 12, minGap = 0.4, active = null } = {}) {
+  const peaks = [];
+  for (let f = 2; f < env.length - 2; f++) {
+    const v = env[f];
+    if (active && !active[f]) continue;
+    if (v > 0 && v >= env[f - 1] && v > env[f + 1] && v >= env[f - 2] && v >= env[f + 2]) peaks.push({ f, v });
+  }
+  const cap = Math.max(1, Math.round(((env.length * hopTime) / 60) * perMinute));
+  const kept = [];
+  for (const p of peaks.sort((a, b) => b.v - a.v)) {
+    if (kept.length >= cap) break;
+    if (kept.every((k) => Math.abs(k.f - p.f) * hopTime >= minGap)) kept.push(p);
+  }
+  return kept.map((p) => p.f * hopTime).sort((a, b) => a - b);
+}
+
+// Move each grid cut onto the real attack when one is close: the strongest
+// onset within ±window seconds, if it clearly stands out from its surroundings.
+export function snapToHits(markers, env, hopTime, window = 0.06, kinds = new Set(['beat', 'downbeat', 'sub'])) {
+  const w = Math.max(1, Math.round(window / hopTime));
+  const ctx = Math.round(0.5 / hopTime);
+  return markers.map((m) => {
+    if (!kinds.has(m.kind)) return m;
+    const f = Math.round(m.time / hopTime);
+    let best = -1;
+    let bestV = 0;
+    for (let j = Math.max(0, f - w); j <= Math.min(env.length - 1, f + w); j++) {
+      if (env[j] > bestV) { bestV = env[j]; best = j; }
+    }
+    if (best < 0) return m;
+    let sum = 0;
+    let n = 0;
+    for (let j = Math.max(0, f - ctx); j <= Math.min(env.length - 1, f + ctx); j++) { sum += env[j]; n++; }
+    return bestV > 2 * (sum / n) ? { ...m, time: best * hopTime } : m;
+  });
+}
