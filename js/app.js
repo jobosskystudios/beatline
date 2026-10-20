@@ -68,6 +68,7 @@ const state = {
   editApplied: false,
   clips: [],
   clipSeed: 1,
+  clipRoot: '',
   range: { in: null, out: null },
   edits: { added: [], removed: new Set() },
   view: { start: 0, dur: 1 },
@@ -169,7 +170,8 @@ function initControls() {
   $('clipFiles').addEventListener('change', (e) => loadClips([...e.target.files]));
   $('clipFolder').addEventListener('change', (e) => loadClips([...e.target.files]));
   $('reshuffle').addEventListener('click', () => { state.clipSeed++; refresh(); toast('New clip order'); });
-  $('clipsPath').addEventListener('change', refresh);
+  $('clipsPath').addEventListener('input', renderClips);
+  $('clipsPath').addEventListener('change', async () => { await verifyClips(); refresh(); });
   $('exportPremiere').addEventListener('click', exportPremiere);
   $('exportResolve').addEventListener('click', exportResolve);
   $('zoomIn').addEventListener('click', () => zoom(0.5));
@@ -837,10 +839,16 @@ function exportXml() {
       toast('Load your clips in the Edit tab first');
       return;
     }
-    const missing = state.clips.filter((c) => !c.folder);
-    if (missing.length) {
+    if (!clipRootFolder()) {
       showTab('edit');
-      toast(`Beatline doesn’t know where ${missing.length} clip${missing.length > 1 ? 's are' : ' is'} on your Mac: fill in the clips folder`);
+      toast('Paste where your clips are on your Mac (Edit tab), so Final Cut can link them');
+      $('clipsPath').focus();
+      return;
+    }
+    const missing = state.clips.filter((c) => c.missing).length;
+    if (missing) {
+      showTab('edit');
+      toast(`${missing} clips aren’t in that folder: Final Cut would show them offline. Check the clips folder.`);
       $('clipsPath').focus();
       return;
     }
@@ -1002,7 +1010,7 @@ async function loadClips(files) {
       height: info.video.height,
       codec: info.video.codec,
       audio: info.audio,
-      folder: '',
+      missing: false,
     });
   }
   state.clips = clips;
@@ -1018,25 +1026,60 @@ async function loadClips(files) {
 }
 
 // Folder of each clip: from the launcher's file finder, else the folder typed.
+// Where the clips live. With the launcher running, find one clip on disk,
+// work out the folder you picked from it, then confirm the rest are there.
 async function locateClips() {
   if (state.server === null) await detectServer();
-  for (const c of state.clips) {
-    c.folder = '';
-    if (state.server) {
-      try {
-        const { paths } = await api(`api/locate?name=${encodeURIComponent(c.fileName)}&size=${c.size}`);
-        if (paths.length) c.folder = dirname(paths[0]);
-      } catch { /* leave for the typed folder */ }
-    }
+  state.clipRoot = '';
+  for (const c of state.clips) c.missing = false;
+  if (!state.server || !state.clips.length) return;
+  for (const c of state.clips.slice(0, 5)) {
+    try {
+      const { paths } = await api(`api/locate?name=${encodeURIComponent(c.fileName)}&size=${c.size}`);
+      if (!paths.length) continue;
+      const sub = clipSubfolder(c);
+      const dir = dirname(paths[0]);
+      state.clipRoot = sub && dir.endsWith(`/${sub}`) ? dir.slice(0, -sub.length - 1) : dir;
+      break;
+    } catch { /* try the next clip */ }
   }
+  await verifyClips();
+}
+
+// Mark clips that aren't where the folder says (only with the launcher).
+async function verifyClips() {
+  if (!state.server) return;
+  const checks = state.clips.map(async (c) => {
+    const folder = clipFolderFor(c);
+    if (!folder) { c.missing = false; return; }
+    try {
+      const { exists, size } = await api(`api/exists?path=${encodeURIComponent(`${folder}/${c.fileName}`)}`);
+      c.missing = !(exists && size === c.size);
+    } catch { c.missing = false; }
+  });
+  await Promise.all(checks);
+}
+
+// Subfolders between the picked folder and the clip ("Choose folder…" keeps them).
+function clipSubfolder(c) {
+  return c.relPath.includes('/') ? c.relPath.split('/').slice(1, -1).join('/') : '';
+}
+
+// The folder you pasted wins; otherwise the one Beatline found. A pasted clip
+// path works too: Beatline works back to the folder you picked.
+function clipRootFolder() {
+  const parsed = parseLocation($('clipsPath').value);
+  if (parsed.error) return state.clipRoot || '';
+  if (!parsed.pointsToFile) return parsed.full;
+  const clip = state.clips.find((c) => c.fileName === parsed.fileName);
+  const sub = clip ? clipSubfolder(clip) : '';
+  return sub && parsed.folder.endsWith(`/${sub}`) ? parsed.folder.slice(0, -sub.length - 1) : parsed.folder;
 }
 
 function clipFolderFor(c) {
-  if (c.folder) return c.folder;
-  const parsed = parseLocation($('clipsPath').value);
-  if (parsed.error) return '';
-  const base = parsed.pointsToFile ? parsed.folder : parsed.full;
-  const sub = c.relPath.includes('/') ? c.relPath.split('/').slice(1, -1).join('/') : '';
+  const base = clipRootFolder();
+  if (!base) return '';
+  const sub = clipSubfolder(c);
   return sub ? `${base}/${sub}` : base;
 }
 
@@ -1048,15 +1091,22 @@ function clipPlacements() {
 
 function renderClips() {
   const n = state.clips.length;
-  const unknown = state.clips.filter((c) => !c.folder).length;
-  $('clipFolderField').hidden = !n || unknown === 0;
   if (!n) return;
+  const root = clipRootFolder();
+  const missing = state.clips.filter((c) => c.missing).length;
+  $('clipFolderField').hidden = false;
+  $('clipsPath').placeholder = state.clipRoot || '/Users/you/Movies/Selects';
   const filled = clipPlacements().length;
   const total = state.plan.shots.length;
   const mins = state.clips.reduce((a, c) => a + c.duration, 0) / 60;
+  const where = !root
+    ? `<span class="bad">Where are these clips on your Mac? Paste their folder below.</span>`
+    : missing
+      ? `<span class="bad">${missing} of ${n} clips aren’t in <code>${root}</code>.</span>`
+      : `<span class="ok">${state.server ? '✓ Found on your Mac:' : 'Final Cut will look in:'}</span> <code>${root}</code>`;
   $('clipInfo').innerHTML = `<span class="${filled === total ? 'ok' : ''}">${n} clips (${mins.toFixed(1)} min) · ${filled} of ${total} shots filled</span>` +
-    (filled < total ? '<br>Some shots are longer than every clip; they stay as placeholders.' : '') +
-    (unknown ? `<br><span class="bad">${unknown} clip${unknown > 1 ? 's' : ''} not found on disk: type the clips folder below.</span>` : '');
+    (filled < total ? '<span>Some shots are longer than every clip; they stay as placeholders.</span>' : '') +
+    `<span>${where}</span>`;
 }
 
 // ---------- other editors ----------

@@ -1,6 +1,6 @@
 {
   "name": "beatline",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "private": true,
   "description": "Detect beats in a song and export Final Cut Pro markers (FCPXML) for beat-synced rough cuts.",
   "type": "module",

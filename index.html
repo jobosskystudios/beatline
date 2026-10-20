@@ -14,7 +14,7 @@
 </head>
 <body>
   <header class="appbar">
-    <a class="brand" href="index.html"><img src="icon.svg" alt="" width="24" height="24"> Beatline <small class="version" id="version">v1.5</small></a>
+    <a class="brand" href="index.html"><img src="icon.svg" alt="" width="24" height="24"> Beatline <small class="version" id="version">v1.6</small></a>
     <label class="file-btn" id="fileBtn" title="Open a song (or drop it anywhere)">
       <input type="file" id="file" accept="audio/*,.wav,.aif,.aiff,.mp3,.m4a,.aac,.flac,.ogg" hidden>
       <strong id="fileName">Open a song…</strong>
@@ -299,6 +299,11 @@
           <input type="file" id="clipFiles" accept="video/*,.mov,.mp4,.m4v" multiple hidden>
           <input type="file" id="clipFolder" webkitdirectory multiple hidden>
           <div class="locate" id="clipInfo">MOV or MP4 clips (ProRes and H.264 both work). Each clip is used once before any repeats.</div>
+          <div class="field" id="clipFolderField" hidden>
+            <span>Clips folder on your Mac</span>
+            <input type="text" id="clipsPath" placeholder="/Users/you/Movies/Selects" spellcheck="false">
+            <span class="note">In Finder, select the clips folder (or any clip in it), hold <kbd>⌥ Option</kbd>, right-click › <em>Copy “…” as Pathname</em>, paste here.</span>
+          </div>
           <div class="row">
             <label class="field"><span>Order</span>
               <select id="clipOrder"><option value="name">By name</option><option value="shuffle">Shuffle</option><option value="fit">Longest on longest</option></select>
@@ -308,9 +313,6 @@
             </label>
           </div>
           <div class="checks"><label><input type="checkbox" id="muteClips" checked> Mute the clips’ own sound</label></div>
-          <label class="field" id="clipFolderField" hidden><span>Clips folder on your Mac</span>
-            <input type="text" id="clipsPath" placeholder="/Users/you/Movies/Selects" spellcheck="false">
-          </label>
           <button id="reshuffle" class="wide" disabled>Shuffle again</button>
         </div>
       </div>
