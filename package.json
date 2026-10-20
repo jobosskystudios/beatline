@@ -7,6 +7,10 @@
   "scripts": {
     "test": "node --test tests/*.test.js",
     "start": "python3 -m http.server 8080",
-    "app": "./beatline.command"
+    "app": "./beatline.command",
+    "build": "node tools/build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.21.5"
   }
 }

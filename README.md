@@ -39,6 +39,17 @@ Runs on your Mac: no upload, no dependencies beyond Python 3 for the launcher.
 - **Premiere Pro XML** (sequence with song + markers) and **DaVinci Resolve marker EDL**; marker and shot lists as CSV
 - **Beatline.app** for Applications and the Dock (`tools/make-mac-app.sh`)
 
+## Download (no Terminal needed)
+
+- **[`dist/Beatline.html`](dist/Beatline.html)**: download, double-click, done. Opens in your browser; paste the song's location in the Export tab.
+- **[`dist/Beatline-mac.zip`](dist/Beatline-mac.zip)**: unzip, drag **Beatline.app** to Applications, open it. With Apple's command line tools installed it finds your songs and opens exports in Final Cut; without them it opens the single-file version and offers the one-time install. First open: see *Opening an app from an unidentified developer* below.
+
+Rebuild both with `npm install && npm run build`.
+
+### Opening an app from an unidentified developer
+
+Beatline.app isn't signed by Apple, so macOS blocks the first open. Double-click it once, click **Done**, then open **System Settings › Privacy & Security**, scroll down and click **Open Anyway** next to "Beatline". (On older macOS: right-click the app › Open.)
+
 ## Open it as an app
 
 First time on a Mac: `./tools/setup-mac.sh` installs what's missing (Apple's command line tools for python3), builds **Beatline.app** in `~/Applications` and opens it.

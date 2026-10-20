@@ -276,7 +276,10 @@ function analyzeInBackground(channels, sampleRate) {
   return new Promise((resolve, reject) => {
     let worker;
     try {
-      worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+      // The single-file build carries the worker as text (no files to load).
+      worker = globalThis.BEATLINE_WORKER_SRC
+        ? new Worker(URL.createObjectURL(new Blob([globalThis.BEATLINE_WORKER_SRC], { type: 'text/javascript' })))
+        : new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
     } catch {
       resolve(analyzeSong({ channels: copies, sampleRate }));
       return;
@@ -425,6 +428,7 @@ async function api(path) {
 }
 
 async function detectServer() {
+  if (location.protocol === 'file:') { state.server = false; return; }
   try { state.server = (await api('api/ping')).app === 'beatline'; } catch { state.server = false; }
 }
 
