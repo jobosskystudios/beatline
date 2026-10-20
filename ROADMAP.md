@@ -33,25 +33,29 @@ plan, energy-aware pacing and a pre-cut timeline; results independent of the Fin
   snare, hi-hat); Web Audio playback with a sample-accurate click; editor-style UI with colour
   waveform, overview, sections and tempo lanes; song location finder and send-to-Final-Cut via
   the launcher; evaluation tools on real recordings
+- v4 – hand-editable grid (drag a beat, ⌥-drag for tempo changes) and best-fitting grid search;
+  cut the song to length (phrase- and harmony-aware, preview, WAV, export); fill the shots with
+  your clips (MOV/MP4, frame-accurate in-points, muted); voice-over phrases; accents (impacts,
+  risers, breaks, pre-drop beat); swing/triplet feel with 8th-note and triplet pacing; Premiere XML
+  and Resolve EDL; Beatline.app builder
+
+## Not done, and why
+
+- **Neural beat/downbeat model** and **stem separation (drums/vocals)**: both need large trained
+  models (tens to hundreds of MB) that this project doesn't ship, and the hosts for the published
+  weights weren't reachable from the build environment, so nothing could be tested. The
+  best-fitting grid search is the higher-accuracy option for now.
+- **Vocal-aware cuts inside full songs** depend on stem separation (above). Voice-over phrases work
+  on speech and sparse arrangements.
+- **Native Swift app**: needs Xcode on a Mac to build and test. Beatline.app (a launcher bundle)
+  covers Dock/Launchpad use in the meantime.
 
 ## Next
 
-1. **Edit the grid by hand.** Drag any beat or bar line; add tempo-change points for songs that
-   speed up or slow down (a tempo map instead of one BPM).
-2. **Auto-assemble from a folder of clips.** Pick a folder; Beatline fills the pre-cut timeline
-   with clips in order, at random, or by shot length, never reusing a take. Horizontal and vertical.
-3. **Cut the music to length.** "Make this 30 s / 60 s": remove whole bars or sections so the song
-   ends on a downbeat, export the music edit as an FCPXML with crossfades.
-4. **Phrases and vocals.** Mark where sung lines start and end so cuts don't land mid-word; speech
-   and silence regions for interviews.
-5. **Accent markers.** Risers, impacts, the last beat before the drop, fills; for SFX and speed ramps.
-6. **Swing and triplets.** Detect shuffle feel and offer a triplet grid.
-7. **Higher-accuracy mode.** An optional neural beat/downbeat model (ONNX in the browser) for hard
-   material; compare with the current engine on the evaluation set.
-8. **Stems.** Optional drum/vocal separation so drum markers ignore bass lines and vocals.
-9. **Other editors.** Premiere Pro XML and DaVinci Resolve marker EDL export.
-10. **Native Mac app.** Swift + AVFoundation: drag a song in, drag the project straight into Final
-    Cut, no launcher needed.
+1. Test pass on a Mac with Final Cut Pro (see CHECKLIST.md) and fix what it finds.
+2. Human-annotated beat datasets in `tools/eval`, run in CI.
+3. Neural beat model as an optional download, if the weights can be bundled.
+4. Native Swift app with drag-to-Final-Cut.
 
 ## Quality bar
 

@@ -9,7 +9,7 @@ const TEMPO = 26;
 const DRUM_ROW = 11;
 
 const LEVEL_VAR = { low: '--lvl-low', mid: '--lvl-mid', high: '--lvl-high' };
-const KIND_VAR = { downbeat: '--downbeat', beat: '--beat', hit: '--hit', manual: '--manual', kick: '--kick', snare: '--snare', hat: '--hat' };
+const KIND_VAR = { downbeat: '--downbeat', beat: '--beat', sub: '--beat', hit: '--hit', manual: '--manual', kick: '--kick', snare: '--snare', hat: '--hat', phrase: '--snare', accent: '--warn' };
 
 export function computePeaks(mono) {
   const n = Math.ceil(mono.length / PEAK_BIN);
@@ -37,7 +37,7 @@ export function bandNorms(bands) {
 
 const fmtClock = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 
-export function createTimeline({ canvas, overview, get, onSeek, onToggle, onRange, onView }) {
+export function createTimeline({ canvas, overview, get, onSeek, onToggle, onRange, onView, onBeatDrag }) {
   const ctx = canvas.getContext('2d');
   const octx = overview.getContext('2d');
   const probe = document.createElement('canvas').getContext('2d');
@@ -230,7 +230,7 @@ export function createTimeline({ canvas, overview, get, onSeek, onToggle, onRang
       if (m.time < start || m.time > start + dur) continue;
       const x = Math.round(xOf(m.time)) + 0.5;
       const on = cut(m);
-      const light = m.kind === 'beat' || m.kind === 'hat';
+      const light = m.kind === 'beat' || m.kind === 'hat' || m.kind === 'sub';
       ctx.strokeStyle = C[KIND_VAR[m.kind]] || C['--text'];
       ctx.lineWidth = light ? 1 : 2;
       ctx.globalAlpha = on ? (light ? 0.7 : 1) : 0.18;
@@ -242,18 +242,35 @@ export function createTimeline({ canvas, overview, get, onSeek, onToggle, onRang
     ctx.globalAlpha = 1;
     ctx.lineWidth = 1;
 
-    // Range.
-    if (s.range) {
-      const a = xOf(s.range[0]);
-      const b = xOf(s.range[1]);
+    // Accents: dashed line with a label in the tempo lane.
+    ctx.setLineDash([4, 3]);
+    for (const a of s.accents ?? []) {
+      if (a.time < start || a.time > start + dur) continue;
+      const x = Math.round(xOf(a.time)) + 0.5;
+      ctx.strokeStyle = C['--warn'];
+      ctx.beginPath(); ctx.moveTo(x, RULER + SECT); ctx.lineTo(x, waveBottom); ctx.stroke();
+      ctx.fillStyle = C['--warn'];
+      ctx.fillText(a.label, x + 3, RULER + SECT + TEMPO / 2);
+    }
+    ctx.setLineDash([]);
+
+    // Parts that play (range or music edit): dim the rest.
+    if (s.keep?.length) {
       ctx.fillStyle = C['--dim'];
-      if (a > 0) ctx.fillRect(0, RULER, Math.min(w, a), h - RULER);
-      if (b < w) ctx.fillRect(Math.max(0, b), RULER, w - Math.max(0, b), h - RULER);
+      let from = 0;
+      for (const [a, b] of [...s.keep, [s.duration, s.duration]]) {
+        const x0 = xOf(from);
+        const x1 = xOf(a);
+        if (x1 > x0) ctx.fillRect(Math.max(0, x0), RULER, Math.min(w, x1) - Math.max(0, x0), h - RULER);
+        from = b;
+      }
       ctx.fillStyle = C['--accent'];
-      ctx.globalAlpha = 0.25;
-      ctx.fillRect(Math.max(0, a), 0, Math.min(w, b) - Math.max(0, a), RULER);
-      ctx.globalAlpha = 1;
-      for (const x of [a, b]) if (x >= 0 && x <= w) ctx.fillRect(Math.round(x) - 1, 0, 2, h);
+      for (const [a, b] of s.keep) {
+        ctx.globalAlpha = 0.25;
+        ctx.fillRect(Math.max(0, xOf(a)), 0, Math.min(w, xOf(b)) - Math.max(0, xOf(a)), RULER);
+        ctx.globalAlpha = 1;
+        for (const x of [xOf(a), xOf(b)]) if (x >= 0 && x <= w) ctx.fillRect(Math.round(x) - 1, 0, 2, h);
+      }
     }
 
     // Playhead.
@@ -294,10 +311,10 @@ export function createTimeline({ canvas, overview, get, onSeek, onToggle, onRang
       overviewKey = key;
     }
     octx.drawImage(overviewImage, 0, 0, w, h);
-    if (s.range) {
+    for (const [a, b] of s.keep ?? []) {
       octx.fillStyle = C['--accent'];
       octx.globalAlpha = 0.18;
-      octx.fillRect(xOf(s.range[0]), 0, xOf(s.range[1]) - xOf(s.range[0]), h);
+      octx.fillRect(xOf(a), 0, xOf(b) - xOf(a), h);
       octx.globalAlpha = 1;
     }
     const vx = xOf(s.view.start);
@@ -321,8 +338,11 @@ export function createTimeline({ canvas, overview, get, onSeek, onToggle, onRang
     if (!s) return;
     const r = canvas.getBoundingClientRect();
     const y = e.clientY - r.top;
+    const beatIdx = y >= RULER + SECT + TEMPO ? nearBeat(s, e.clientX) : -1;
     drag = {
-      kind: y < RULER ? 'range' : 'pan',
+      kind: y < RULER ? 'range' : beatIdx >= 0 ? 'beat' : 'pan',
+      beat: beatIdx,
+      ripple: e.altKey,
       x: e.clientX,
       t: timeAtClient(canvas, e.clientX, s.view.start, s.view.dur),
       viewStart: s.view.start,
@@ -331,11 +351,36 @@ export function createTimeline({ canvas, overview, get, onSeek, onToggle, onRang
     };
     canvas.setPointerCapture(e.pointerId);
   });
+  // Index of the beat line under the pointer (within 5 px), or -1.
+  function nearBeat(s, clientX) {
+    if (s.mode !== 'beats' || !s.beats?.length) return -1;
+    const r = canvas.getBoundingClientRect();
+    const x = clientX - r.left;
+    let best = -1;
+    let bestD = 5;
+    s.beats.forEach((t, i) => {
+      const d = Math.abs(((t - s.view.start) / s.view.dur) * r.width - x);
+      if (d <= bestD) { best = i; bestD = d; }
+    });
+    return best;
+  }
+
   canvas.addEventListener('pointermove', (e) => {
-    if (!drag) return;
+    if (!drag) {
+      const s = get();
+      if (!s) return;
+      const r = canvas.getBoundingClientRect();
+      const y = e.clientY - r.top;
+      canvas.style.cursor = y >= RULER + SECT + TEMPO && nearBeat(s, e.clientX) >= 0 ? 'ew-resize' : '';
+      return;
+    }
     const s = get();
     if (Math.abs(e.clientX - drag.x) > 3) drag.moved = true;
     if (!drag.moved) return;
+    if (drag.kind === 'beat') {
+      onBeatDrag(drag.beat, timeAtClient(canvas, e.clientX, s.view.start, s.view.dur), drag.ripple || e.altKey, false);
+      return;
+    }
     if (drag.kind === 'range') {
       const t = timeAtClient(canvas, e.clientX, s.view.start, s.view.dur);
       onRange(Math.min(drag.t, t), Math.max(drag.t, t));
@@ -351,6 +396,8 @@ export function createTimeline({ canvas, overview, get, onSeek, onToggle, onRang
     if (!drag.moved) {
       if (drag.shift) onToggle(drag.t);
       else onSeek(drag.t);
+    } else if (drag.kind === 'beat') {
+      onBeatDrag(drag.beat, null, drag.ripple, true);
     }
     drag = null;
     try { canvas.releasePointerCapture(e.pointerId); } catch { /* not captured */ }

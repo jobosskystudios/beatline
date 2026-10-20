@@ -1,10 +1,11 @@
 // Offline support: serve the app from cache, refresh the cache in the background.
-const CACHE = 'beatline-v2';
+const CACHE = 'beatline-v3';
 const SHELL = [
   './', 'index.html', 'guide.html', 'how-it-works.html', 'faq.html', 'styles.css', 'icon.svg',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/dsp.js', 'js/analysis.js', 'js/worker.js', 'js/player.js', 'js/timeline.js', 'js/fileinfo.js',
   'js/markers.js', 'js/fcpxml.js', 'js/structure.js', 'js/cutplan.js',
+  'js/insights.js', 'js/musicedit.js', 'js/clips.js', 'js/exports.js',
 ];
 
 self.addEventListener('install', (e) => {

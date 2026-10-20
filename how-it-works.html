@@ -42,6 +42,15 @@
     <h2>6. Sections and the drop</h2>
     <p>Each bar’s loudness is classified as calm, groove or peak relative to the song’s own range. Runs of bars become sections; the biggest jump up into a peak is the drop. Auto pacing uses these levels to cut slower in calm parts and faster in peaks.</p>
 
+    <h2>Feel, accents and phrases</h2>
+    <p><strong>Swing:</strong> Beatline measures where the hits between beats fall. Straight eighths sit halfway; swung ones later (around 60–70 %); triplet feels add hits at a third and two thirds. <em>Every 8th note</em> pacing follows the measured swing. <strong>Accents:</strong> impacts are the hardest hits (about one per 20 s), breaks are drops of 12 dB or more lasting at least a beat, risers are bars getting brighter and louder into a louder section, and the last beat before the drop is marked. <strong>Voice phrases:</strong> speech is split at pauses longer than your setting; shorter gaps between words are joined first.</p>
+
+    <h2>Cutting a song to length</h2>
+    <p>For a target length, Beatline tries every pair of bar lines where the opening could end and the ending could start, scores each pair by how close it gets to the target, whether both are phrase or section starts, and how similar the harmony is on both sides (chroma per bar), and keeps the best. The preview and WAV use a 30 ms equal-power crossfade at the join.</p>
+
+    <h2>Best-fitting grid</h2>
+    <p>Tries six strictness settings and the tempo ±1 % and keeps the grid whose beats sit on the strongest onsets. On the evaluation songs it lifted the hardest material (a tempo-changing orchestral piece) from 0.41 to 0.63 agreement with the reference, and it runs automatically when confidence is low.</p>
+
     <h2>7. Key and loudness</h2>
     <p>The key is estimated by matching the song’s overall chroma against Krumhansl–Kessler major and minor profiles, shown with its Camelot code. It is an estimate and can be a related key. Loudness is integrated LUFS per ITU-R BS.1770 (K-weighting, gating), with the sample peak.</p>
 

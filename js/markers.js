@@ -2,6 +2,8 @@
 import { sectionAt } from './structure.js';
 
 export const PACING = {
+  triplet: 'Every triplet (3 per beat)',
+  eighth: 'Every 8th note (follows swing)',
   beat: 'Every beat',
   half: 'Every 2nd beat',
   bar: 'Every bar',
@@ -24,9 +26,13 @@ function keep(density, rel, isDown, bar) {
 // beats: seconds. phase: index of the first downbeat within the bar cycle.
 export const DRUM_LABEL = { kick: 'Kick', snare: 'Snare', hat: 'Hi-hat' };
 
-export function buildMarkers({ mode, beats, onsets, drums, drumKinds = ['kick', 'snare'], phase = 0, beatsPerBar = 4, density = 'beat', offset = 0, edits, sections, autoMap = AUTO_DEFAULT }) {
+const SUBDIV = { eighth: 2, triplet: 3 };
+
+export function buildMarkers({ mode, beats, onsets, drums, drumKinds = ['kick', 'snare'], phrases = [], phase = 0, beatsPerBar = 4, density = 'beat', offset = 0, edits, sections, autoMap = AUTO_DEFAULT, swingRatio = 0.5 }) {
   let list = [];
-  if (mode === 'hits') {
+  if (mode === 'phrases') {
+    list = phrases.map((p, i) => ({ time: p.time, kind: 'phrase', label: `Phrase ${i + 1}` }));
+  } else if (mode === 'hits') {
     list = onsets.map((t, i) => ({ time: t, kind: 'hit', label: `Hit ${i + 1}` }));
   } else if (mode === 'drums') {
     for (const kind of drumKinds) {
@@ -39,12 +45,19 @@ export function buildMarkers({ mode, beats, onsets, drums, drumKinds = ['kick', 
       const bar = Math.floor(rel / beatsPerBar) + 1;
       const isDown = beatInBar === 1;
       const d = density === 'auto' ? autoMap[sections?.length ? sectionAt(sections, t).level : 'mid'] : density;
-      if (!keep(d, rel, isDown, bar)) return;
+      const sub = SUBDIV[d];
+      if (!sub && !keep(d, rel, isDown, bar)) return;
       list.push({
         time: t,
         kind: isDown ? 'downbeat' : 'beat',
         label: isDown ? `Bar ${bar}` : `Bar ${bar} · Beat ${beatInBar}`,
       });
+      // Subdivisions between this beat and the next (8ths sit on the swing).
+      if (sub && i + 1 < beats.length) {
+        const len = beats[i + 1] - t;
+        const parts = sub === 2 ? [swingRatio] : [1 / 3, 2 / 3];
+        parts.forEach((f, j) => list.push({ time: t + f * len, kind: 'sub', label: `Bar ${bar} · Beat ${beatInBar}${sub === 2 ? ' &' : ` ${['trip', 'let'][j]}`}` }));
+      }
     });
   }
   list = list.map((m) => ({ ...m, time: m.time + offset }));

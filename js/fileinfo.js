@@ -88,3 +88,99 @@ export function readAudioInfo(arrayBuffer) {
     return null;
   }
 }
+
+// ---------- video clips (QuickTime / MP4) ----------
+
+// Walks ISO-BMFF boxes inside a DataView window [start, end).
+function* boxes(v, start, end) {
+  let o = start;
+  while (o + 8 <= end) {
+    let size = v.getUint32(o);
+    const type = ascii(v, o + 4, 4);
+    let header = 8;
+    if (size === 1) {
+      size = Number(v.getBigUint64(o + 8));
+      header = 16;
+    } else if (size === 0) {
+      size = end - o;
+    }
+    if (size < header || o + size > end) return;
+    yield { type, start: o + header, end: o + size };
+    o += size;
+  }
+}
+const child = (v, box, type) => {
+  for (const b of boxes(v, box.start, box.end)) if (b.type === type) return b;
+  return null;
+};
+
+function parseMoov(v, moov) {
+  const info = { duration: 0, video: null, audio: null };
+  const mvhd = child(v, moov, 'mvhd');
+  if (mvhd) {
+    const ver = v.getUint8(mvhd.start);
+    const ts = v.getUint32(mvhd.start + (ver ? 20 : 12));
+    const dur = ver ? Number(v.getBigUint64(mvhd.start + 24)) : v.getUint32(mvhd.start + 16);
+    info.duration = ts ? dur / ts : 0;
+  }
+  for (const trak of boxes(v, moov.start, moov.end)) {
+    if (trak.type !== 'trak') continue;
+    const tkhd = child(v, trak, 'tkhd');
+    const mdia = child(v, trak, 'mdia');
+    if (!mdia) continue;
+    const hdlr = child(v, mdia, 'hdlr');
+    const handler = hdlr ? ascii(v, hdlr.start + 8, 4) : '';
+    const mdhd = child(v, mdia, 'mdhd');
+    const mver = mdhd ? v.getUint8(mdhd.start) : 0;
+    const timescale = mdhd ? v.getUint32(mdhd.start + (mver ? 20 : 12)) : 0;
+    const stbl = child(v, child(v, mdia, 'minf') ?? { start: 0, end: 0 }, 'stbl');
+    if (handler === 'vide' && !info.video) {
+      const width = tkhd ? v.getUint32(tkhd.end - 8) / 65536 : 0;
+      const height = tkhd ? v.getUint32(tkhd.end - 4) / 65536 : 0;
+      let frameDuration = null;
+      const stts = stbl && child(v, stbl, 'stts');
+      if (stts && v.getUint32(stts.start + 4) > 0) frameDuration = { num: v.getUint32(stts.start + 12), den: timescale };
+      const stsd = stbl && child(v, stbl, 'stsd');
+      const codec = stsd ? ascii(v, stsd.start + 12, 4) : '';
+      info.video = { width: Math.round(width), height: Math.round(height), frameDuration, codec };
+    } else if (handler === 'soun' && !info.audio) {
+      const stsd = stbl && child(v, stbl, 'stsd');
+      const entry = stsd ? stsd.start + 8 : 0;
+      info.audio = stsd ? { channels: v.getUint16(entry + 24), sampleRate: v.getUint32(entry + 32) >>> 16 } : { channels: 2, sampleRate: 48000 };
+    }
+  }
+  return info;
+}
+
+function findMoov(buf) {
+  const v = new DataView(buf);
+  for (const b of boxes(v, 0, v.byteLength)) if (b.type === 'moov') return parseMoov(v, b);
+  return null;
+}
+
+// Reads a File's header (and tail, for files whose index is at the end).
+export async function readMovieInfo(file) {
+  const HEAD = 4 << 20;
+  try {
+    const head = await file.slice(0, Math.min(file.size, HEAD)).arrayBuffer();
+    const v = new DataView(head);
+    let o = 0;
+    for (const b of boxes(v, 0, v.byteLength)) {
+      if (b.type === 'moov') return parseMoov(v, b);
+      o = b.end;
+    }
+    // Walk top-level box headers through the file to find 'moov'.
+    while (o + 16 <= file.size) {
+      const h = new DataView(await file.slice(o, o + 16).arrayBuffer());
+      let size = h.getUint32(0);
+      if (size === 1) size = Number(h.getBigUint64(8));
+      if (size < 8) return null;
+      if (ascii(h, 4, 4) === 'moov') {
+        if (size > 64 << 20) return null;
+        return findMoov(await file.slice(o, o + size).arrayBuffer());
+      }
+      o += size;
+    }
+  } catch { /* not a movie we can read */ }
+  return null;
+}

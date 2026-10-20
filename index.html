@@ -53,7 +53,9 @@
             <span data-mode-only="drums"><i style="background:var(--snare)"></i>Snare</span>
             <span data-mode-only="drums"><i style="background:var(--hat)"></i>Hi-hat</span>
             <span data-mode-only="hits"><i style="background:var(--hit)"></i>Hit</span>
+            <span data-mode-only="phrases"><i style="background:var(--snare)"></i>Phrase</span>
             <span><i style="background:var(--manual)"></i>Yours</span>
+            <span><i style="background:var(--warn)"></i>Accent</span>
             <span><i style="background:linear-gradient(90deg,var(--wave-low),var(--wave-mid),var(--wave-high))"></i>Bass · mids · highs</span>
           </div>
           <div class="zoom">
@@ -62,7 +64,7 @@
             <button id="zoomIn" title="Zoom in (+)">+</button>
           </div>
         </div>
-        <p class="hint">Click to seek · drag on the ruler to set a range · <kbd>Shift</kbd>+click adds/removes a cut · <kbd>←</kbd>/<kbd>→</kbd> previous/next cut · <kbd>M</kbd> cut at playhead · <kbd>D</kbd> bar 1 here · <kbd>[</kbd>/<kbd>]</kbd> nudge grid · <kbd>I</kbd>/<kbd>O</kbd>/<kbd>X</kbd> range · <kbd>T</kbd> tap tempo</p>
+        <p class="hint">Click to seek · drag on the ruler to set a range · <kbd>Shift</kbd>+click adds/removes a cut · drag a beat line to move it (<kbd>⌥</kbd> moves the rest too) · <kbd>←</kbd>/<kbd>→</kbd> previous/next cut · <kbd>M</kbd> cut at playhead · <kbd>D</kbd> bar 1 here · <kbd>[</kbd>/<kbd>]</kbd> nudge grid · <kbd>I</kbd>/<kbd>O</kbd>/<kbd>X</kbd> range · <kbd>T</kbd> tap tempo</p>
       </div>
 
       <section class="card" id="analysisCard" hidden>
@@ -84,6 +86,11 @@
             <span class="s" id="fMeterSub"></span>
           </div>
           <div class="fact">
+            <span class="k">Feel</span>
+            <span class="v" id="fFeel">–</span>
+            <span class="s" id="fFeelSub"></span>
+          </div>
+          <div class="fact">
             <span class="k">Song shape</span>
             <span class="v" id="fShape">–</span>
             <span class="s" id="fShapeSub"></span>
@@ -102,6 +109,11 @@
             <span class="k">Music</span>
             <span class="v" id="fSpan">–</span>
             <span class="s" id="fSpanSub"></span>
+          </div>
+          <div class="fact">
+            <span class="k">Accents</span>
+            <span class="v" id="fAccents">–</span>
+            <span class="s" id="fAccentsSub"></span>
           </div>
         </div>
       </section>
@@ -158,7 +170,8 @@
     <aside class="card inspector" id="inspector">
       <div class="tabs" role="tablist">
         <button role="tab" data-tab="cuts" aria-selected="true">Cuts</button>
-        <button role="tab" data-tab="grid" aria-selected="false">Beat grid</button>
+        <button role="tab" data-tab="grid" aria-selected="false">Grid</button>
+        <button role="tab" data-tab="edit" aria-selected="false">Edit</button>
         <button role="tab" data-tab="export" aria-selected="false">Export</button>
       </div>
 
@@ -170,6 +183,7 @@
               <button data-v="beats" aria-pressed="true">Beat grid</button>
               <button data-v="drums" aria-pressed="false">Drums</button>
               <button data-v="hits" aria-pressed="false">Any hit</button>
+              <button data-v="phrases" aria-pressed="false">Voice</button>
             </div>
           </div>
           <div data-for="beats" class="group">
@@ -187,6 +201,11 @@
               <label><input type="checkbox" id="drumHat"> <i class="dot" style="background:var(--hat)"></i> Hi-hat</label>
             </div>
             <p class="note">Cuts on the drum you pick: kicks for punch, snares for backbeat accents.</p>
+          </div>
+          <p class="note" data-for="phrases" hidden>For voice-over and interviews: a cut where each phrase starts after a pause.</p>
+          <div data-for="phrases" class="field" hidden>
+            <span>Shortest pause (s)</span>
+            <input type="number" id="minPause" min="0.1" max="2" step="0.05" value="0.3">
           </div>
           <div data-for="drums hits" class="field" hidden>
             <span>Sensitivity <output id="sensOut"></output></span>
@@ -232,6 +251,11 @@
             </div>
           </div>
           <button id="barHere" class="wide" title="Make the beat nearest the playhead bar 1 (D)">Bar 1 at playhead</button>
+          <p class="note">Drag any beat line on the timeline to move it; hold <kbd>⌥</kbd> to move every later beat with it (for tempo changes).</p>
+          <div class="inline">
+            <button id="thorough" class="wide" title="Try several grids and keep the one that sits best on the music">Find best-fitting grid</button>
+            <button id="resetGrid" class="wide" disabled>Reset grid edits</button>
+          </div>
           <div class="field">
             <span>Nudge whole grid (ms)</span>
             <div class="inline">
@@ -243,6 +267,45 @@
         </div>
       </div>
 
+      <div class="tabpanel" data-panel="edit" hidden>
+        <div class="group">
+          <span class="group-title">Cut the song to length</span>
+          <div class="inline">
+            <input type="number" id="editTarget" min="5" step="1" placeholder="Seconds">
+            <button data-edit="15">15</button><button data-edit="30">30</button><button data-edit="60">60</button>
+          </div>
+          <div class="locate" id="editInfo">Pick a length: Beatline keeps the opening, jumps on a bar line to the real ending, and picks the jump where the harmony matches.</div>
+          <div class="inline">
+            <button id="editPreview" class="wide" disabled>▶ Preview</button>
+            <button id="editWav" class="wide" disabled>Download WAV</button>
+          </div>
+          <div class="checks"><label><input type="checkbox" id="editApply" disabled> Use this edit for the cut plan and export</label></div>
+        </div>
+        <div class="group">
+          <span class="group-title">Fill the shots with your clips</span>
+          <div class="inline">
+            <label class="btn wide" for="clipFiles">Choose clips…</label>
+            <label class="btn wide" for="clipFolder">Choose folder…</label>
+          </div>
+          <input type="file" id="clipFiles" accept="video/*,.mov,.mp4,.m4v" multiple hidden>
+          <input type="file" id="clipFolder" webkitdirectory multiple hidden>
+          <div class="locate" id="clipInfo">MOV or MP4 clips (ProRes and H.264 both work). Each clip is used once before any repeats.</div>
+          <div class="row">
+            <label class="field"><span>Order</span>
+              <select id="clipOrder"><option value="name">By name</option><option value="shuffle">Shuffle</option><option value="fit">Longest on longest</option></select>
+            </label>
+            <label class="field"><span>Use</span>
+              <select id="clipUse"><option value="start">Clip starts</option><option value="middle">Clip middles</option></select>
+            </label>
+          </div>
+          <div class="checks"><label><input type="checkbox" id="muteClips" checked> Mute the clips’ own sound</label></div>
+          <label class="field" id="clipFolderField" hidden><span>Clips folder on your Mac</span>
+            <input type="text" id="clipsPath" placeholder="/Users/you/Movies/Selects" spellcheck="false">
+          </label>
+          <button id="reshuffle" class="wide" disabled>Shuffle again</button>
+        </div>
+      </div>
+
       <div class="tabpanel" data-panel="export" hidden>
         <div class="group">
           <div class="field">
@@ -251,13 +314,15 @@
               <button data-v="clip" aria-pressed="true">Song + markers</button>
               <button data-v="blocked" aria-pressed="false">Pre-cut</button>
               <button data-v="gap" aria-pressed="false">Markers</button>
+              <button data-v="assembled" aria-pressed="false">My clips</button>
             </div>
           </div>
           <p class="note" data-for="clip">A new project with the song and every cut as a marker.</p>
           <p class="note" data-for="blocked" hidden>One placeholder per shot with the song underneath. Drag footage onto a placeholder and choose <em>Replace from Start</em>.</p>
           <p class="note" data-for="gap" hidden>Markers on an empty clip. Put your song under it yourself.</p>
+          <p class="note" data-for="assembled" hidden>Your clips already cut to the shots, song underneath. Load clips in the Edit tab first.</p>
         </div>
-        <div class="group" data-for="clip blocked">
+        <div class="group" data-for="clip blocked assembled">
           <span class="group-title">Song location</span>
           <div class="locate" id="locate">
             <span id="locateStatus">Open a song first.</span>
@@ -281,6 +346,7 @@
               <label class="field"><span>Section markers</span><select id="styleSection" class="style"></select></label>
               <label class="field"><span>Bar-start markers</span><select id="styleDown" class="style"></select></label>
               <label class="field"><span>Beat, drum &amp; hit markers</span><select id="styleBeat" class="style"></select></label>
+              <label class="field"><span>Accent markers (impacts, risers, breaks)</span><select id="styleAccent" class="style"></select></label>
               <div class="row">
                 <label class="field"><span>Project format</span>
                   <select id="res"><option value="1080p">1080p HD</option><option value="4k">4K UHD</option><option value="720p">720p</option><option value="vertical">Vertical 9:16</option><option value="square">Square 1:1</option></select>
@@ -293,6 +359,10 @@
             </div>
           </details>
           <button id="exportXml2" class="primary wide" disabled>Export to Final Cut</button>
+          <div class="inline">
+            <button id="exportPremiere" class="wide" disabled title="Premiere Pro: File › Import">Premiere XML</button>
+            <button id="exportResolve" class="wide" disabled title="Resolve: Timeline › Import › Timeline Markers from EDL">Resolve EDL</button>
+          </div>
           <details id="xmlBox" hidden>
             <summary>Download didn’t start? Copy the file instead</summary>
             <div class="group" style="margin-top:10px">

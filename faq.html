@@ -46,6 +46,12 @@
     </ul>
     <p>Some editors reported that the built-in markers in Final Cut 12.2 were further off than in 12.0 on the same songs. Beatline’s results don’t depend on Final Cut’s version.</p>
 
+    <h2>The song speeds up or slows down.</h2>
+    <p>Press <em>Find best-fitting grid</em> (Grid tab), lower the strictness, or fix it by hand: drag a beat line, and hold <kbd>⌥</kbd> to move every later beat with it.</p>
+
+    <h2>Is there a neural-network (“AI”) beat tracker or stem separation?</h2>
+    <p>Not yet. Both need large trained models that Beatline doesn’t ship. The <em>Find best-fitting grid</em> search is the high-accuracy option today; it runs automatically when Beatline is unsure.</p>
+
     <h2>The tempo is double (or half) what I feel.</h2>
     <p>Very common with half-time grooves. Click a tempo chip under the tempo, or type the BPM you want in the Beat grid tab.</p>
 
@@ -65,10 +71,13 @@
     <p>No. Decoding, analysis and export happen on your Mac. The launcher’s file search runs locally and only answers Beatline itself.</p>
 
     <h2>Can I use the markers in Premiere Pro or DaVinci Resolve?</h2>
-    <p>Download the marker list or shot list (.csv): seconds, frames and timecode for every cut.</p>
+    <p>Yes: <em>Premiere XML</em> (a sequence with the song and markers) and <em>Resolve EDL</em> (timeline markers) in the Export tab, plus marker and shot lists as CSV.</p>
+
+    <h2>Which clips work for “My clips”?</h2>
+    <p>MOV and MP4 files (ProRes, H.264, HEVC). Beatline reads each clip’s length, frame rate and size from the file itself. Shots longer than every clip stay as placeholders.</p>
 
     <h2>Can I use it offline, as an app?</h2>
-    <p>Yes. Run <code>./beatline.command</code>, then <em>Install Beatline</em> in Chrome or Edge, or <em>File › Add to Dock</em> in Safari.</p>
+    <p>Yes. Run <code>./tools/make-mac-app.sh</code> once to get <em>Beatline.app</em> in <code>~/Applications</code>, or install it from Chrome/Edge (<em>Install Beatline</em>) or Safari (<em>File › Add to Dock</em>).</p>
   </main>
 
   <footer class="site-footer"><a href="index.html">Open Beatline →</a></footer>

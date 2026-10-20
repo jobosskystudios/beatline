@@ -4,9 +4,16 @@
 #
 #   BEATLINE_PORT=9000 ./beatline.command   use another port (default 8765)
 #   BEATLINE_NO_OPEN=1 ./beatline.command   only start the server
+#   ./beatline.command stop                 stop a running Beatline
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 PORT="${BEATLINE_PORT:-8765}"
+
+if [ "$1" = "stop" ]; then
+  PIDS=$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null)
+  [ -n "$PIDS" ] && kill $PIDS && echo "Stopped Beatline on port $PORT." || echo "Beatline isn't running on port $PORT."
+  exit 0
+fi
 
 is_beatline() {
   curl -fs --max-time 1 "http://127.0.0.1:$1/index.html" 2>/dev/null | grep -q '<title>Beatline</title>'

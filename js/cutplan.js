@@ -1,11 +1,15 @@
-// Cut plan: every cut marker inside the range becomes an edit point; the
-// spans between them are the shots an editor has to fill.
+// Cut plan: every cut marker on the timeline becomes an edit point; the spans
+// between them are the shots an editor has to fill.
+//
+// Times here are *timeline* times: the song as it will play in the edit (a
+// range of it, or a music edit made of several pieces). `songTimeAt` maps a
+// timeline time back to the song for section lookups.
 import { toFrame } from './fcpxml.js';
 import { sectionAt } from './structure.js';
 
-export const CUT_KINDS = new Set(['beat', 'downbeat', 'hit', 'manual', 'kick', 'snare', 'hat']);
+export const CUT_KINDS = new Set(['beat', 'downbeat', 'hit', 'manual', 'kick', 'snare', 'hat', 'sub', 'phrase']);
 
-export function planCuts({ markers, rate, rounding, inFrame, outFrame, minShotFrames = 1, sections = [] }) {
+export function planCuts({ markers, rate, rounding, inFrame, outFrame, minShotFrames = 1, sections = [], songTimeAt = (t) => t }) {
   const frames = [...new Set(
     markers.filter((m) => CUT_KINDS.has(m.kind)).map((m) => toFrame(m.time, rate, rounding)),
   )].filter((f) => f > inFrame && f < outFrame).sort((a, b) => a - b);
@@ -22,7 +26,7 @@ export function planCuts({ markers, rate, rounding, inFrame, outFrame, minShotFr
   const bounds = [inFrame, ...cuts, outFrame];
   const shots = bounds.slice(1).map((end, i) => {
     const start = bounds[i];
-    const s = sections.length ? sectionAt(sections, sec(start)) : null;
+    const s = sections.length ? sectionAt(sections, songTimeAt(sec(start))) : null;
     return { index: i + 1, start, end, frames: end - start, seconds: sec(end - start), section: s };
   });
   const lengthSec = sec(outFrame - inFrame);
@@ -43,19 +47,32 @@ export function planCuts({ markers, rate, rounding, inFrame, outFrame, minShotFr
   };
 }
 
-// Per-section summary for the cut plan table.
-export function sectionSummary(sections, plan, rate, inFrame, outFrame) {
+// Per-section summary. `segments` are the song pieces on the timeline, in
+// song seconds ({ start, end }); the default is a range [inFrame, outFrame).
+export function sectionSummary(sections, plan, rate, inFrame, outFrame, segments = null) {
   const sec = (f) => (f * rate.num) / rate.den;
-  const a = sec(inFrame);
-  const b = sec(outFrame);
+  const pieces = segments ?? [{ start: sec(inFrame), end: sec(outFrame) }];
+  // Timeline offset of each piece.
+  let acc = segments ? 0 : sec(inFrame);
+  const placed = pieces.map((p) => { const o = acc; acc += p.end - p.start; return { ...p, offset: o }; });
   return sections
     .map((s, k) => {
-      const start = Math.max(s.start, a);
-      const end = Math.min(s.end, b);
-      if (end <= start) return null;
-      const cuts = plan.cuts.filter((f) => sec(f) >= start && sec(f) < end).length;
+      let length = 0;
+      let cuts = 0;
+      let first = null;
+      for (const p of placed) {
+        const a = Math.max(s.start, p.start);
+        const b = Math.min(s.end, p.end);
+        if (b <= a) continue;
+        const ta = p.offset + (a - p.start);
+        const tb = p.offset + (b - p.start);
+        first ??= a;
+        length += tb - ta;
+        cuts += plan.cuts.filter((f) => sec(f) >= ta && sec(f) < tb).length;
+      }
+      if (!length) return null;
       const shots = plan.shots.filter((x) => x.section === s).length;
-      return { n: k + 1, section: s, start, end, cuts, avgShot: (end - start) / Math.max(1, shots) };
+      return { n: k + 1, section: s, start: first, end: first + length, cuts, avgShot: length / Math.max(1, shots) };
     })
     .filter(Boolean);
 }

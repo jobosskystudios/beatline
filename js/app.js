@@ -1,12 +1,16 @@
 import { toMono, trackBeats, pickOnsets, hitEnvelope } from './dsp.js';
 import { analyzeSong, beatChroma, detectMeter, tempoStability, drumHits } from './analysis.js';
 import { buildMarkers, markerKey, DENSITY, PACING, AUTO_DEFAULT } from './markers.js';
-import { FRAME_RATES, MARKER_STYLES, buildFcpxml, buildCsv, buildShotCsv, toFrame, timecode } from './fcpxml.js';
+import { FRAME_RATES, RESOLUTIONS, MARKER_STYLES, buildFcpxml, buildCsv, buildShotCsv, snapMarkers, toFrame, timecode } from './fcpxml.js';
 import { barGrid, detectSections, sectionMarkers, LEVEL_LABEL } from './structure.js';
 import { planCuts, sectionSummary } from './cutplan.js';
 import { Player } from './player.js';
 import { createTimeline, computePeaks, bandNorms } from './timeline.js';
-import { readAudioInfo } from './fileinfo.js';
+import { readAudioInfo, readMovieInfo } from './fileinfo.js';
+import { detectSwing, detectAccents, speechPhrases, thoroughGrid } from './insights.js';
+import { planMusicEdit, barChromaFromBeats, renderEdit, encodeWav } from './musicedit.js';
+import { assignClips } from './clips.js';
+import { buildPremiereXml, buildResolveEdl } from './exports.js';
 
 const $ = (id) => document.getElementById(id);
 const TIGHTNESS = [5, 10, 20, 40, 70, 100, 200, 400, 800, 1600];
@@ -16,12 +20,14 @@ const DEFAULTS = {
   mode: 'beats', density: 'bar', tight: '6', sens: '0.5', minShot: '0.5', lead: '0',
   autoLow: AUTO_DEFAULT.low, autoMid: AUTO_DEFAULT.mid, autoHigh: AUTO_DEFAULT.high,
   drumKick: true, drumSnare: true, drumHat: false,
-  fps: '23.976', rounding: 'nearest', styleSection: 'chapter', styleDown: 'standard', styleBeat: 'standard',
+  minPause: '0.3', clipOrder: 'name', clipUse: 'start', muteClips: true,
+  fps: '23.976', rounding: 'nearest', styleSection: 'chapter', styleDown: 'standard', styleBeat: 'standard', styleAccent: 'todo',
   target: 'clip', folder: '', res: '1080p', version: '1.10', eventName: 'Beatline',
 };
 const SETTING_IDS = ['density', 'tight', 'sens', 'minShot', 'lead', 'autoLow', 'autoMid', 'autoHigh', 'fps', 'rounding',
-  'styleSection', 'styleDown', 'styleBeat', 'folder', 'res', 'version', 'eventName'];
+  'styleSection', 'styleDown', 'styleBeat', 'styleAccent', 'folder', 'res', 'version', 'eventName', 'minPause', 'clipOrder', 'clipUse'];
 const DRUM_IDS = { drumKick: 'kick', drumSnare: 'snare', drumHat: 'hat' };
+const CHECKBOX_IDS = [...Object.keys(DRUM_IDS), 'muteClips'];
 
 const state = {
   settings: { ...DEFAULTS },
@@ -50,6 +56,17 @@ const state = {
   markers: [],
   plan: null,
   cutFrames: new Set(),
+  cutSongTimes: [],
+  downbeatTimes: [],
+  placed: [],
+  gridEdited: false,
+  swing: { feel: 'straight', ratio: 0.5, label: 'Straight' },
+  accents: [],
+  phrases: [],
+  edit: null, // music edit plan
+  editApplied: false,
+  clips: [],
+  clipSeed: 1,
   range: { in: null, out: null },
   edits: { added: [], removed: new Set() },
   view: { start: 0, dur: 1 },
@@ -90,7 +107,7 @@ function initControls() {
       onSetting(id);
     });
   }
-  for (const id of Object.keys(DRUM_IDS)) {
+  for (const id of CHECKBOX_IDS) {
     $(id).checked = !!s[id];
     $(id).addEventListener('change', () => { s[id] = $(id).checked; saveSettings(); refresh(); });
   }
@@ -140,6 +157,19 @@ function initControls() {
   $('shotTable').addEventListener('click', onRowClick);
   $('play').addEventListener('click', togglePlay);
   $('clickToggle').addEventListener('click', toggleClick);
+  $('thorough').addEventListener('click', () => runThorough(true));
+  $('resetGrid').addEventListener('click', () => retrack(false));
+  for (const b of document.querySelectorAll('[data-edit]')) b.addEventListener('click', () => { $('editTarget').value = b.dataset.edit; makeMusicEdit(); });
+  $('editTarget').addEventListener('change', makeMusicEdit);
+  $('editPreview').addEventListener('click', previewEdit);
+  $('editWav').addEventListener('click', downloadEditWav);
+  $('editApply').addEventListener('change', () => { state.editApplied = $('editApply').checked; if (state.editApplied) state.range = { in: null, out: null }; refresh(); });
+  $('clipFiles').addEventListener('change', (e) => loadClips([...e.target.files]));
+  $('clipFolder').addEventListener('change', (e) => loadClips([...e.target.files]));
+  $('reshuffle').addEventListener('click', () => { state.clipSeed++; refresh(); toast('New clip order'); });
+  $('clipsPath').addEventListener('change', refresh);
+  $('exportPremiere').addEventListener('click', exportPremiere);
+  $('exportResolve').addEventListener('click', exportResolve);
   $('zoomIn').addEventListener('click', () => zoom(0.5));
   $('zoomOut').addEventListener('click', () => zoom(2));
   $('zoomFit').addEventListener('click', fitView);
@@ -173,6 +203,7 @@ function onSetting(id) {
   if (id === 'tight') retrack(false);
   else if (id === 'sens') { detectHits(); refresh(); }
   else if (id === 'fps') { refresh(); updateTime(); }
+  else if (id === 'minPause') { state.phrases = speechPhrases(state.o, { minPause: +state.settings.minPause || 0.3 }); refresh(); }
   else refresh();
 }
 
@@ -181,7 +212,11 @@ function onSetting(id) {
 async function loadFile(file) {
   if (!file) return;
   audioCtx ??= new AudioContext();
-  player ??= new Player(audioCtx);
+  if (!player) {
+    player = new Player(audioCtx);
+    player.clickTimes = () => state.cutSongTimes;
+    player.accentAt = (t) => state.downbeatTimes.some((d) => Math.abs(d - t) < 0.03);
+  }
   player.stop();
   setBusy(`Reading ${file.name}…`);
   $('fileName').textContent = file.name;
@@ -273,7 +308,42 @@ function applyAnalysis(r) {
     sampleRate: state.buffer.sampleRate,
   };
   detectHits();
+  state.phrases = speechPhrases(r.o, { minPause: +state.settings.minPause || 0.3 });
   retrack(true);
+  // Hard material (rubato, live, speech): search for the best-fitting grid.
+  if (r.info.confidence === 'low') runThorough(false);
+}
+
+function runThorough(announce) {
+  const best = thoroughGrid(state.o.env, state.o.hopTime, state.bpm, state.o.active, trackBeats, [20, 40, 100, 200, 400, 800]);
+  const idx = TIGHTNESS.reduce((bi, v, i) => (Math.abs(Math.log(v / best.tightness)) < Math.abs(Math.log(TIGHTNESS[bi] / best.tightness)) ? i : bi), 0);
+  state.settings.tight = String(idx + 1);
+  $('tight').value = state.settings.tight;
+  if (Math.abs(best.bpm - state.bpm) > 0.01) $('bpm').value = best.bpm.toFixed(2);
+  updateVisibility();
+  retrack(true);
+  if (announce) toast(`Best fit: ${best.bpm.toFixed(1)} BPM, strictness ${state.settings.tight}/10`);
+}
+
+// Drag a beat line: move one beat, or (ripple) it and every later beat.
+function onBeatDrag(i, t, ripple, done) {
+  if (done) { state.structureKey = ''; refresh(); return; }
+  const b = state.beats;
+  if (ripple) {
+    const d = t - b[i];
+    const lo = i > 0 ? b[i - 1] + 0.05 : 0;
+    if (t < lo) return;
+    for (let j = i; j < b.length; j++) b[j] += d;
+  } else {
+    const lo = i > 0 ? b[i - 1] + 0.05 : 0;
+    const hi = i + 1 < b.length ? b[i + 1] - 0.05 : state.buffer.duration;
+    b[i] = Math.min(hi, Math.max(lo, t));
+  }
+  state.beatFrames = b.map((x) => Math.round(x / state.o.hopTime));
+  state.gridEdited = true;
+  state.stability = tempoStability(b);
+  state.structureKey = '';
+  refresh();
 }
 
 function detectHits() {
@@ -289,6 +359,9 @@ function retrack(resetPhase) {
   state.beatFrames = trackBeats(state.o.env, state.o.hopTime, state.bpm, TIGHTNESS[+state.settings.tight - 1], state.o.active);
   state.beats = state.beatFrames.map((f) => f * state.o.hopTime);
   state.stability = tempoStability(state.beats);
+  state.gridEdited = false;
+  state.edit = null;
+  state.editApplied = false;
   state.structureKey = '';
   if (resetPhase) {
     state.phaseShift = 0;
@@ -445,12 +518,56 @@ function phase() {
 }
 
 function updateStructure() {
-  const key = `${state.beats.length}|${state.beats[0]}|${state.bpm}|${phase()}|${state.bpb}`;
+  const key = `${state.beats.length}|${state.beats[0]}|${state.beats[state.beats.length - 1]}|${state.bpm}|${phase()}|${state.bpb}`;
   if (key === state.structureKey) return;
   state.structureKey = key;
   state.bars = barGrid(state.beats, phase(), state.bpb, state.buffer.duration);
   state.sections = detectSections(state.mono, state.buffer.sampleRate, state.bars, state.buffer.duration);
+  state.swing = detectSwing(state.o.env, state.o.hopTime, state.beats, state.o.active);
+  state.accents = detectAccents(state.o, { beats: state.beats, bars: state.bars, sections: state.sections, duration: state.buffer.duration });
 }
+
+// ---------- the timeline: which parts of the song play, in order ----------
+
+// Song pieces on the timeline, frame-exact: the applied music edit, the
+// range, or the whole song.
+function segmentFrames() {
+  if (state.edit && state.editApplied) {
+    return state.edit.segments
+      .map((g) => ({ inFrame: toFrame(g.start, rate(), 'nearest'), outFrame: Math.min(songFrames(), toFrame(g.end, rate(), 'nearest')) }))
+      .filter((g) => g.outFrame > g.inFrame);
+  }
+  return [rangeFrames()];
+}
+
+function placeSegments() {
+  let acc = 0;
+  state.placed = segmentFrames().map((g) => {
+    const o = { ...g, offset: acc };
+    acc += g.outFrame - g.inFrame;
+    return o;
+  });
+  return acc;
+}
+
+// Song seconds → timeline seconds (null when that part isn't played).
+function toTimeline(t) {
+  const f = t * fpsNum();
+  for (const g of state.placed) if (f >= g.inFrame && f < g.outFrame) return (g.offset + f - g.inFrame) / fpsNum();
+  return null;
+}
+
+// Timeline seconds → song seconds.
+function toSong(tl) {
+  const f = tl * fpsNum();
+  for (const g of state.placed) {
+    if (f >= g.offset && f < g.offset + g.outFrame - g.inFrame) return (g.inFrame + f - g.offset) / fpsNum();
+  }
+  const last = state.placed[state.placed.length - 1];
+  return last ? last.outFrame / fpsNum() : 0;
+}
+
+const editing = () => state.edit && state.editApplied;
 
 function refresh() {
   if (!state.o) return;
@@ -463,6 +580,7 @@ function refresh() {
     onsets: state.onsets,
     drums: state.drums,
     drumKinds: Object.entries(DRUM_IDS).filter(([id]) => s[id]).map(([, k]) => k),
+    phrases: state.phrases,
     phase: phase(),
     beatsPerBar: state.bpb,
     density: s.density,
@@ -470,18 +588,23 @@ function refresh() {
     edits: state.edits,
     sections: state.sections,
     autoMap: { low: s.autoLow, mid: s.autoMid, high: s.autoHigh },
+    swingRatio: state.swing.ratio,
   });
-  const { inFrame, outFrame } = rangeFrames();
+  const total = placeSegments();
+  const tlMarkers = state.markers.map((m) => ({ ...m, time: toTimeline(m.time) })).filter((m) => m.time != null);
   state.plan = planCuts({
-    markers: state.markers,
+    markers: tlMarkers,
     rate: rate(),
     rounding: s.rounding,
-    inFrame,
-    outFrame,
+    inFrame: 0,
+    outFrame: total,
     minShotFrames: Math.round((parseFloat(s.minShot) || 0) * fpsNum()),
     sections: state.sections,
+    songTimeAt: toSong,
   });
   state.cutFrames = new Set(state.plan.cuts);
+  state.cutSongTimes = state.plan.cuts.map((f) => toSong(frameSec(f))).sort((a, b) => a - b);
+  state.downbeatTimes = state.markers.filter((m) => m.kind === 'downbeat').map((m) => m.time);
 
   const st = state.plan.stats;
   $('sCuts').textContent = st.cuts;
@@ -490,12 +613,17 @@ function refresh() {
   $('sCpm').textContent = st.cutsPerMin.toFixed(0);
   $('sLen').textContent = fmtDur(st.lengthSec);
   const ranged = state.range.in != null || state.range.out != null;
-  $('sLenLabel').textContent = ranged ? 'range length' : 'length';
-  $('rangeLabel').textContent = ranged ? `${timecode(inFrame, rate())} → ${timecode(outFrame, rate())}` : 'Whole song';
+  $('sLenLabel').textContent = editing() ? 'music edit' : ranged ? 'range length' : 'length';
+  const { inFrame, outFrame } = rangeFrames();
+  $('rangeLabel').textContent = editing()
+    ? `Music edit: ${state.edit.segments.map((g) => `${fmtTime(g.start)}–${fmtTime(g.end)}`).join(' + ')}`
+    : ranged ? `${timecode(inFrame, rate())} → ${timecode(outFrame, rate())}` : 'Whole song';
   $('resetEdits').disabled = !state.edits.added.length && !state.edits.removed.size;
+  $('resetGrid').disabled = !state.gridEdited;
   $('bpm').placeholder = `auto (${state.autoBpm.toFixed(1)})`;
   renderAnalysis();
-  renderPlan(inFrame, outFrame);
+  renderPlan();
+  renderClips();
   draw();
 }
 
@@ -538,6 +666,17 @@ function renderAnalysis() {
   $('fKey').textContent = info.key.name;
   $('fKeySub').textContent = `Camelot ${info.key.camelot} · estimate`;
 
+  if (conf === 'low') state.swing = { feel: 'straight', ratio: 0.5, label: '–' };
+  $('fFeel').textContent = state.swing.label;
+  $('fFeelSub').textContent = conf === 'low' ? 'Needs a steady beat' : state.swing.feel === 'swing' ? 'Off-beats land late: 8th-note cuts follow it'
+    : state.swing.feel === 'triplet' ? 'Beats split in three: try triplet pacing' : 'Even 8th notes';
+  const count = (type) => state.accents.filter((a) => a.type === type).length;
+  const imp = count('impact');
+  const ris = count('riser');
+  const brk = count('break');
+  $('fAccents').innerHTML = `${imp} <small>impact${imp === 1 ? '' : 's'}</small>`;
+  $('fAccentsSub').textContent = [ris && `${ris} riser${ris > 1 ? 's' : ''}`, brk && `${brk} break${brk > 1 ? 's' : ''}`, count('predrop') && 'pre-drop beat'].filter(Boolean).join(' · ') || 'No risers or breaks';
+
   const L = info.loudness;
   $('fLoud').innerHTML = `${Number.isFinite(L.lufs) ? L.lufs.toFixed(1) : '–'} <small>LUFS</small>`;
   $('fLoudSub').textContent = `Peak ${L.peakDb.toFixed(1)} dBFS · streaming plays at about −14`;
@@ -551,8 +690,9 @@ function renderAnalysis() {
 
 const LEVEL_VAR = { low: '--lvl-low', mid: '--lvl-mid', high: '--lvl-high' };
 
-function renderPlan(inFrame, outFrame) {
-  const rows = sectionSummary(state.sections, state.plan, rate(), inFrame, outFrame);
+function renderPlan() {
+  const songPieces = state.placed.map((g) => ({ start: frameSec(g.inFrame), end: frameSec(g.outFrame) }));
+  const rows = sectionSummary(state.sections, state.plan, rate(), 0, 0, songPieces);
   const dbs = state.sections.map((x) => x.db);
   const lo = Math.min(...dbs);
   const hi = Math.max(...dbs);
@@ -574,8 +714,8 @@ function renderPlan(inFrame, outFrame) {
   if (st.dropped > 0) notes.push(`${st.dropped} cut${st.dropped > 1 ? 's' : ''} skipped by the shortest-shot limit (faded on the timeline)`);
   $('planNote').textContent = `${notes.join(' · ')}.`;
   $('shotSummary').textContent = `Shot list: ${st.shots} shots`;
-  $('shotTable').tBodies[0].innerHTML = state.plan.shots.map((x) => `<tr class="clickable" data-t="${frameSec(x.start)}">
-      <td>${x.index}</td><td>${timecode(x.start - inFrame, rate())}</td><td>${x.seconds.toFixed(2)}s</td><td>${x.frames}</td>
+  $('shotTable').tBodies[0].innerHTML = state.plan.shots.map((x) => `<tr class="clickable" data-t="${toSong(frameSec(x.start))}">
+      <td>${x.index}</td><td>${timecode(x.start, rate())}</td><td>${x.seconds.toFixed(2)}s</td><td>${x.frames}</td>
       <td>${x.section ? `<span class="chip"><i class="dot" style="background:var(${LEVEL_VAR[x.section.level]})"></i>${x.section.label}</span>` : ''}</td>
     </tr>`).join('');
 }
@@ -591,7 +731,8 @@ function onRowClick(e) {
 // ---------- editing ----------
 
 function isCut(m) {
-  return state.cutFrames.has(toFrame(m.time, rate(), state.settings.rounding));
+  const tl = toTimeline(m.time);
+  return tl != null && state.cutFrames.has(toFrame(tl, rate(), state.settings.rounding));
 }
 
 function toggleMarkerAt(time) {
@@ -611,7 +752,7 @@ function toggleMarkerAt(time) {
 
 function jumpCut(dir) {
   const t = player.time;
-  const times = state.plan.cuts.map(frameSec);
+  const times = state.cutSongTimes;
   const next = dir > 0 ? times.find((x) => x > t + 0.01) : [...times].reverse().find((x) => x < t - 0.01);
   if (next != null) {
     seek(next);
@@ -625,12 +766,16 @@ const songBase = () => state.file.name.replace(/\.[^.]+$/, '');
 
 function exportMarkers() {
   const cuts = state.markers.filter(isCut);
-  return [...cuts, ...sectionMarkers(state.sections)];
+  return [...cuts, ...sectionMarkers(state.sections), ...state.accents];
 }
 
 function exportStyles() {
   const s = state.settings;
-  return { section: s.styleSection, downbeat: s.styleDown, beat: s.styleBeat, hit: s.styleBeat, kick: s.styleBeat, snare: s.styleBeat, hat: s.styleBeat, manual: 'todo' };
+  return {
+    section: s.styleSection, accent: s.styleAccent, downbeat: s.styleDown,
+    beat: s.styleBeat, sub: s.styleBeat, hit: s.styleBeat, kick: s.styleBeat, snare: s.styleBeat, hat: s.styleBeat, phrase: s.styleBeat,
+    manual: 'todo',
+  };
 }
 
 function exportXml() {
@@ -650,8 +795,24 @@ function exportXml() {
       return;
     }
   }
+  let placements = [];
+  if (s.target === 'assembled') {
+    if (!state.clips.length) {
+      showTab('edit');
+      toast('Load your clips in the Edit tab first');
+      return;
+    }
+    const missing = state.clips.filter((c) => !c.folder);
+    if (missing.length) {
+      showTab('edit');
+      toast(`Beatline doesn’t know where ${missing.length} clip${missing.length > 1 ? 's are' : ' is'} on your Mac: fill in the clips folder`);
+      $('clipsPath').focus();
+      return;
+    }
+    placements = clipPlacements();
+  }
   const name = songBase();
-  const kind = { clip: 'markers', blocked: 'pre-cut', gap: 'markers only' }[s.target];
+  const kind = { clip: 'markers', blocked: 'pre-cut', gap: 'markers only', assembled: 'assembled' }[s.target] + (editing() ? ` ${Math.round(state.plan.stats.lengthSec)}s edit` : '');
   const xml = buildFcpxml({
     markers: exportMarkers(),
     fps: s.fps,
@@ -660,8 +821,10 @@ function exportXml() {
     version: s.version,
     styles: exportStyles(),
     target: s.target,
-    range: rangeFrames(),
+    segments: segmentFrames(),
     shots: state.plan.shots,
+    placements,
+    muteClips: s.muteClips,
     song: {
       name,
       fileName: state.file.name,
@@ -705,7 +868,7 @@ function exportCsv() {
 }
 
 function exportShots() {
-  download(`${songBase()} shot list.csv`, buildShotCsv(state.plan.shots, state.settings.fps, rangeFrames().inFrame), 'text/csv');
+  download(`${songBase()} shot list.csv`, buildShotCsv(state.plan.shots, state.settings.fps, (f) => Math.round(toSong(frameSec(f)) * fpsNum())), 'text/csv');
 }
 
 function download(name, text, type) {
@@ -715,6 +878,192 @@ function download(name, text, type) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ---------- music edit (cut the song to length) ----------
+
+function makeMusicEdit() {
+  const target = parseFloat($('editTarget').value);
+  if (!state.o || !(target > 0)) return;
+  const barChroma = barChromaFromBeats(beatChroma(state.chroma, state.beats, state.buffer.duration), state.beats, state.bars);
+  state.edit = planMusicEdit({ bars: state.bars, barChroma, duration: state.buffer.duration, target, sections: state.sections });
+  if (!state.edit) {
+    $('editInfo').textContent = `The song is already ${fmtDur(state.buffer.duration)}: no edit needed.`;
+    state.editApplied = false;
+  } else {
+    const e = state.edit;
+    const pieces = e.segments.map((g) => `${fmtTime(g.start)}–${fmtTime(g.end)}`).join(' + ');
+    $('editInfo').innerHTML = `<span><span class="ok">${fmtDur(e.length)} edit</span> · ${pieces}</span><span>` +
+      (e.seam ? `Jumps from bar ${e.seam.fromBar} to bar ${e.seam.toBar} · harmony match ${Math.round(e.seam.match * 100)}%` : e.fadeOut ? 'Ends with a 1.5 s fade on a bar line' : 'Starts later in the song and keeps the real ending') + '</span>';
+  }
+  for (const id of ['editPreview', 'editWav', 'editApply']) $(id).disabled = !state.edit;
+  $('editApply').checked = state.editApplied = !!state.edit;
+  if (state.editApplied) state.range = { in: null, out: null };
+  stopPreview();
+  refresh();
+}
+
+function editChannels() {
+  const chans = [];
+  for (let c = 0; c < state.buffer.numberOfChannels; c++) chans.push(state.buffer.getChannelData(c));
+  return renderEdit(chans, state.buffer.sampleRate, state.edit.segments, { fadeOut: state.edit.fadeOut });
+}
+
+let previewSrc = null;
+function stopPreview() {
+  if (previewSrc) { try { previewSrc.stop(); } catch { /* stopped */ } previewSrc = null; }
+  $('editPreview').textContent = '▶ Preview';
+}
+async function previewEdit() {
+  if (previewSrc) { stopPreview(); return; }
+  if (!state.edit) return;
+  player.pause();
+  syncPlayButton();
+  const data = editChannels();
+  const buf = audioCtx.createBuffer(data.length, data[0].length, state.buffer.sampleRate);
+  data.forEach((d, c) => buf.copyToChannel(d, c));
+  await audioCtx.resume();
+  // Start a few seconds before the seam so you hear the join.
+  const seamAt = state.edit.seam ? state.edit.segments[0].end - state.edit.segments[0].start : 0;
+  previewSrc = audioCtx.createBufferSource();
+  previewSrc.buffer = buf;
+  previewSrc.connect(audioCtx.destination);
+  previewSrc.onended = stopPreview;
+  previewSrc.start(0, Math.max(0, seamAt - 6));
+  $('editPreview').textContent = '■ Stop';
+  toast(state.edit.seam ? 'Playing from 6 s before the join' : 'Playing the edit');
+}
+
+function downloadEditWav() {
+  if (!state.edit) return;
+  const wav = encodeWav(editChannels(), state.buffer.sampleRate);
+  const url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: `${songBase()} ${Math.round(state.edit.length)}s edit.wav` });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+// ---------- clips (auto-assemble) ----------
+
+async function loadClips(files) {
+  const videos = files.filter((f) => /\.(mov|mp4|m4v)$/i.test(f.name) && !f.name.startsWith('._'));
+  if (!videos.length) { toast('No MOV or MP4 files there'); return; }
+  $('clipInfo').innerHTML = `<span class="busy"><span class="spinner"></span>Reading ${videos.length} clips…</span>`;
+  const clips = [];
+  for (const f of videos) {
+    const info = await readMovieInfo(f);
+    if (!info?.video || !(info.duration > 0)) continue;
+    clips.push({
+      file: f,
+      name: f.name.replace(/\.[^.]+$/, ''),
+      fileName: f.name,
+      relPath: f.webkitRelativePath || f.name,
+      size: f.size,
+      duration: info.duration,
+      frameDuration: info.video.frameDuration,
+      width: info.video.width,
+      height: info.video.height,
+      codec: info.video.codec,
+      audio: info.audio,
+      folder: '',
+    });
+  }
+  state.clips = clips;
+  await locateClips();
+  showTab('edit');
+  $('reshuffle').disabled = !clips.length;
+  if (clips.length && state.settings.target !== 'assembled') {
+    state.settings.target = 'assembled';
+    saveSettings();
+    updateVisibility();
+  }
+  refresh();
+}
+
+// Folder of each clip: from the launcher's file finder, else the folder typed.
+async function locateClips() {
+  if (state.server === null) await detectServer();
+  for (const c of state.clips) {
+    c.folder = '';
+    if (state.server) {
+      try {
+        const { paths } = await api(`api/locate?name=${encodeURIComponent(c.fileName)}&size=${c.size}`);
+        if (paths.length) c.folder = dirname(paths[0]);
+      } catch { /* leave for the typed folder */ }
+    }
+  }
+}
+
+function clipFolderFor(c) {
+  if (c.folder) return c.folder;
+  const base = $('clipsPath').value.trim().replace(/\/+$/, '');
+  if (!base.startsWith('/')) return '';
+  const sub = c.relPath.includes('/') ? c.relPath.split('/').slice(1, -1).join('/') : '';
+  return sub ? `${base}/${sub}` : base;
+}
+
+function clipPlacements() {
+  const s = state.settings;
+  const clips = state.clips.map((c) => ({ ...c, folder: clipFolderFor(c) }));
+  return assignClips(state.plan.shots, clips, { order: s.clipOrder, use: s.clipUse, seed: state.clipSeed });
+}
+
+function renderClips() {
+  const n = state.clips.length;
+  const unknown = state.clips.filter((c) => !c.folder).length;
+  $('clipFolderField').hidden = !n || unknown === 0;
+  if (!n) return;
+  const filled = clipPlacements().length;
+  const total = state.plan.shots.length;
+  const mins = state.clips.reduce((a, c) => a + c.duration, 0) / 60;
+  $('clipInfo').innerHTML = `<span class="${filled === total ? 'ok' : ''}">${n} clips (${mins.toFixed(1)} min) · ${filled} of ${total} shots filled</span>` +
+    (filled < total ? '<br>Some shots are longer than every clip; they stay as placeholders.' : '') +
+    (unknown ? `<br><span class="bad">${unknown} clip${unknown > 1 ? 's' : ''} not found on disk: type the clips folder below.</span>` : '');
+}
+
+// ---------- other editors ----------
+
+function timelineMarkersSnapped() {
+  const all = exportMarkers()
+    .map((m) => ({ ...m, time: toTimeline(m.time) }))
+    .filter((m) => m.time != null);
+  return snapMarkers(all, rate(), state.settings.rounding, exportStyles());
+}
+
+function songInfo() {
+  return {
+    name: songBase(),
+    fileName: state.file.name,
+    folder: state.settings.folder.trim(),
+    duration: state.buffer.duration,
+    channels: state.audioInfo?.channels ?? state.buffer.numberOfChannels,
+    audioRate: state.audioInfo?.sampleRate,
+  };
+}
+
+function exportPremiere() {
+  if (!state.plan) return;
+  if (!state.settings.folder.trim().startsWith('/')) {
+    showTab('export');
+    toast('Add the song’s folder so Premiere can link it');
+    return;
+  }
+  const res = RESOLUTIONS[state.settings.res];
+  const xml = buildPremiereXml({
+    name: `${songBase()} – beats`, fps: state.settings.fps, width: res.width, height: res.height,
+    markers: timelineMarkersSnapped(), segments: segmentFrames(), song: songInfo(),
+  });
+  download(`${songBase()} premiere.xml`, xml, 'application/xml');
+  toast('Saved. In Premiere Pro: File › Import… and pick the .xml');
+}
+
+function exportResolve() {
+  if (!state.plan) return;
+  const edl = buildResolveEdl({ name: `${songBase()} markers`, fps: state.settings.fps, markers: timelineMarkersSnapped() });
+  download(`${songBase()} resolve markers.edl`, edl, 'text/plain');
+  toast('Saved. In Resolve: Timeline › Import › Timeline Markers from EDL…');
 }
 
 // ---------- timeline & playback ----------
@@ -738,12 +1087,14 @@ const timeline = createTimeline({
     isCut,
     mode: state.settings.mode,
     drums: state.drums,
-    range: state.range.in != null || state.range.out != null ? [frameSec(rangeFrames().inFrame), frameSec(rangeFrames().outFrame)] : null,
+    keep: editing() || state.range.in != null || state.range.out != null ? state.placed.map((g) => [frameSec(g.inFrame), frameSec(g.outFrame)]) : null,
+    accents: state.accents,
   } : null),
   onSeek: (t) => seek(t),
   onToggle: (t) => toggleMarkerAt(t),
   onRange: (a, b) => { state.range = { in: a, out: b }; refresh(); },
   onView: (v) => setView(v),
+  onBeatDrag,
 });
 
 function draw() {
@@ -820,7 +1171,7 @@ function setBusy(msg, error) {
 function showWorkspace() {
   $('empty').hidden = true;
   for (const id of ['timelineCard', 'analysisCard', 'planCard']) $(id).hidden = false;
-  for (const id of ['play', 'clickToggle', 'exportXml', 'exportXml2']) $(id).disabled = false;
+  for (const id of ['play', 'clickToggle', 'exportXml', 'exportXml2', 'exportPremiere', 'exportResolve']) $(id).disabled = false;
   syncPlayButton();
   updateTime();
   refresh();

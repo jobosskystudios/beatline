@@ -77,10 +77,12 @@ const styles = { section: 'chapter', downbeat: 'standard', beat: 'standard', hit
 
 test('pre-cut timeline: one placeholder per shot with the song connected below', () => {
   const markers = [2, 4].map((t) => ({ time: t, kind: 'downbeat', label: `Bar ${t}` }));
-  const plan = planCuts({ markers, rate: r25, rounding: 'nearest', inFrame: 25, outFrame: 150 });
+  // Range 1 s–6 s of the song; cuts at song 2 s and 4 s = timeline 1 s and 3 s.
+  const timelineMarkers = markers.map((m) => ({ ...m, time: m.time - 1 }));
+  const plan = planCuts({ markers: timelineMarkers, rate: r25, rounding: 'nearest', inFrame: 0, outFrame: 125 });
   const xml = buildFcpxml({
     markers, fps: '25', resolution: '1080p', rounding: 'nearest', version: '1.10', styles,
-    target: 'blocked', range: { inFrame: 25, outFrame: 150 }, shots: plan.shots, song, eventName: 'E', projectName: 'P',
+    target: 'blocked', segments: [{ inFrame: 25, outFrame: 150 }], shots: plan.shots, song, eventName: 'E', projectName: 'P',
   });
   const gaps = [...xml.matchAll(/<gap name="(Shot \d+)" offset="([^"]+)" start="0s" duration="([^"]+)"/g)].map((m) => m.slice(1));
   assert.deepEqual(gaps, [['Shot 1', '0s', '1s'], ['Shot 2', '1s', '2s'], ['Shot 3', '3s', '2s']]);
@@ -101,6 +103,6 @@ test('markers-only export shifts markers to the range start', () => {
 });
 
 test('shot list CSV uses timeline timecode', () => {
-  const shots = [{ index: 1, start: 50, end: 75, frames: 25, seconds: 1, section: { label: 'Drop', level: 'high' } }];
-  assert.equal(buildShotCsv(shots, '25', 50).split('\n')[1], '1,00:00:00:00,00:00:01:00,25,1.000,00:00:02:00,"Drop",high');
+  const shots = [{ index: 1, start: 0, end: 25, frames: 25, seconds: 1, section: { label: 'Drop', level: 'high' } }];
+  assert.equal(buildShotCsv(shots, '25', (f) => f + 50).split('\n')[1], '1,00:00:00:00,00:00:01:00,25,1.000,00:00:02:00,"Drop",high');
 });

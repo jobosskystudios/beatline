@@ -24,7 +24,8 @@
     <p class="lede">Beatline listens to the song first, then plans the cuts, then hands Final Cut Pro a project that is already timed to the music.</p>
 
     <h2>0. Start Beatline</h2>
-    <p>In Terminal, in the Beatline folder, run <code>./beatline.command</code> (or double-click it in Finder). It opens Beatline in its own window and, unlike a browser tab, can find your song on disk so Final Cut links it correctly.</p>
+    <p>In Terminal, in the Beatline folder, run <code>./beatline.command</code> (or double-click it in Finder). It opens Beatline in its own window and, unlike a browser tab, can find your song and clips on disk so Final Cut links them correctly.</p>
+    <p>Want it in Applications and the Dock? Run <code>./tools/make-mac-app.sh</code> once; it builds <em>Beatline.app</em> in <code>~/Applications</code>. Beatline keeps a small server running in the background; <code>./beatline.command stop</code> stops it.</p>
 
     <h2>1. Listen and check</h2>
     <ol class="steps">
@@ -35,7 +36,8 @@
           <li>Feels twice or half as fast? Click a tempo chip (<em>½×</em>, <em>2×</em>, <em>⅔×</em>, <em>1.5×</em>) under the tempo.</li>
           <li>Bar numbers start on the wrong beat? Put the playhead on the real “one” and press <kbd>D</kbd>.</li>
           <li>Whole grid a hair early or late? <kbd>[</kbd> and <kbd>]</kbd> nudge it by 10 ms.</li>
-          <li>Live band drifting? Beatline says so under the tempo; follow the <em>Loosen the grid</em> link.</li>
+          <li>Live band drifting? Beatline says so under the tempo; follow the <em>Loosen the grid</em> link, or press <em>Find best-fitting grid</em> (Grid tab).</li>
+          <li>One beat wrong? Drag its line on the timeline. Hold <kbd>⌥</kbd> while dragging to move every later beat too: that’s how you fix a song that changes tempo.</li>
         </ul>
       </li>
     </ol>
@@ -51,7 +53,9 @@
           <tr><td>Wedding film, slow emotional</td><td>Beat grid · Every 2 or 4 bars</td></tr>
           <tr><td>Builds to a drop</td><td>Beat grid · Auto: follow the song’s energy</td></tr>
           <tr><td>Punchy accents</td><td>Drums · Kick and/or Snare</td></tr>
+          <tr><td>Shuffle, swing, hip-hop</td><td>Beat grid · Every 8th note (follows the swing)</td></tr>
           <tr><td>No steady beat</td><td>Any hit</td></tr>
+          <tr><td>Voice-over, interview</td><td>Voice (a cut at each phrase after a pause)</td></tr>
         </table>
       </li>
       <li><strong>Check the numbers.</strong> The cut plan shows total cuts, shots to fill, average shot length and cuts per minute, and the same per section. That’s how many clips you need to pull.</li>
@@ -59,9 +63,15 @@
       <li><strong>Fine-tune.</strong> <em>Shortest shot</em> drops cuts that would make flash frames (shown faded). <em>Cut early</em> moves every cut 1–2 frames ahead of the beat, which often reads tighter. <kbd>Shift</kbd>+click adds or removes a single cut; <kbd>M</kbd> adds one at the playhead.</li>
     </ol>
 
+    <h2>2½. Shorten the song, fill the shots</h2>
+    <ol class="steps">
+      <li><strong>Cut the song to length</strong> (Edit tab): type a length or press 15/30/60. Beatline keeps the opening, jumps on a phrase boundary to the song’s real ending, and picks the jump where the harmony matches. Press <em>Preview</em> to hear the join, <em>Download WAV</em> for the shortened song, and tick <em>Use this edit</em> so the cut plan and export follow it.</li>
+      <li><strong>Fill the shots with your clips</strong> (Edit tab): choose clips or a whole folder. Each clip is used once before any repeats, starting just after its first second (or from its middle). Then export <em>My clips</em>: a rough cut with your footage already on the beat.</li>
+    </ol>
+
     <h2>3. Export to Final Cut</h2>
     <ol class="steps">
-      <li><strong>Pick the export</strong> (Export tab): <em>Song + markers</em>, <em>Pre-cut</em> (a placeholder per shot, already timed) or <em>Markers</em> only.</li>
+      <li><strong>Pick the export</strong> (Export tab): <em>Song + markers</em>, <em>Pre-cut</em> (a placeholder per shot, already timed), <em>Markers</em> only, or <em>My clips</em> (your footage cut to the shots).</li>
       <li><strong>Check “Song location” shows ✓ Found.</strong> Final Cut links the song by its full path; a wrong path imports a silent, offline clip. Beatline fills this in for you when started with <code>beatline.command</code>.</li>
       <li><strong>Set the frame rate</strong> to your Final Cut project’s, then <em>Export to Final Cut</em> (<kbd>⌘E</kbd>). Double-click the downloaded <code>.fcpxml</code>, or in Final Cut choose <strong>File › Import › XML…</strong>.</li>
     </ol>
@@ -71,6 +81,12 @@
       <li><strong>Pre-cut timeline:</strong> drag a clip from the browser onto a placeholder and choose <strong>Replace from Start</strong>. It takes the placeholder’s exact length, so every cut stays on the beat. Work left to right.</li>
       <li><strong>Song + markers:</strong> select the song and <strong>Edit › Lift from Storyline</strong> (<kbd>⌥⌘↑</kbd>), turn on snapping (<kbd>N</kbd>), then trim or overwrite to the markers. <kbd>⌃'</kbd> / <kbd>⌃;</kbd> jump marker to marker.</li>
       <li>The Timeline Index (<kbd>⇧⌘2</kbd> › Tags) lists every marker by name: sections, “Bar 12”, “Snare 40”.</li>
+    </ul>
+
+    <h2>Premiere Pro and DaVinci Resolve</h2>
+    <ul>
+      <li><strong>Premiere XML</strong> (Export tab): a sequence with the song and every marker. In Premiere: <em>File › Import…</em></li>
+      <li><strong>Resolve EDL</strong>: markers for an existing timeline. In Resolve: <em>Timeline › Import › Timeline Markers from EDL…</em> (assumes the timeline starts at 01:00:00:00).</li>
     </ul>
 
     <h2>Keyboard</h2>

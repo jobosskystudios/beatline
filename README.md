@@ -10,6 +10,7 @@ Runs on your Mac: no upload, no dependencies beyond Python 3 for the launcher.
 | [`how-it-works.html`](how-it-works.html) | The analysis and export, and how they were tested |
 | [`faq.html`](faq.html) | Silent audio in Final Cut, tempo, timing, Final Cut's own beat detection |
 | [`ROADMAP.md`](ROADMAP.md) | Research notes and what's next |
+| [`CHECKLIST.md`](CHECKLIST.md) | What to test on your Mac with Final Cut Pro |
 
 ## Features
 
@@ -20,18 +21,23 @@ Runs on your Mac: no upload, no dependencies beyond Python 3 for the launcher.
 - Time signature (3/4 vs 4/4) and bar 1 from bass + harmony; fix with **D** (bar 1 at playhead) and grid nudge
 - Sections (calm / groove / peak) and the drop; key with Camelot code; integrated loudness (LUFS) and peak
 - Drum hits (kick, snare, hi-hat) and any-hit detection
+- Swing / triplet feel; accents (impacts, risers, breaks, the beat before the drop); voice-over phrases
+- Fix the grid by hand: drag a beat line, ⌥-drag to move every later beat (tempo changes); best-fitting grid search
 
 **Plan**
-- Cut on the beat grid (every beat … every 8 bars, or **auto** by section energy), on drums, or on any hit
+- Cut on the beat grid (every triplet / 8th note … every 8 bars, or **auto** by section energy), on drums, on any hit, or on voice phrases
 - Total cuts, shots to fill, average shot length, cuts per minute, per-section breakdown, shot list CSV
 - Ranges for cut-downs (drag the ruler, I/O, or 6/15/30/60/90 s ending on a bar line)
 - Shortest-shot limit, cut 1–2 frames early, add/remove cuts by hand, metronome click on every cut
+- **Cut the song to length** (15/30/60 s or any): keeps the opening and the real ending, jumps on a phrase where the harmony matches; preview, WAV, or use it for the cut plan and export
+- **Fill the shots with your clips** (MOV/MP4 folder): each clip once before repeats, in-points on the clip's own frames
 
 **Export**
-- Song + markers, pre-cut timeline (one placeholder per shot, song connected), or markers only
+- Song + markers, pre-cut timeline (one placeholder per shot, song connected), markers only, or **your clips cut to the shots**
 - Frame-exact at 23.976–60 fps; FCPXML 1.9/1.10/1.11; marker styles per type; section chapter markers
 - The launcher finds the song on your Mac (so Final Cut links it, no silent offline clips) and opens the export in Final Cut Pro directly
-- Marker list and shot list CSV for other editors
+- **Premiere Pro XML** (sequence with song + markers) and **DaVinci Resolve marker EDL**; marker and shot lists as CSV
+- **Beatline.app** for Applications and the Dock (`tools/make-mac-app.sh`)
 
 ## Open it as an app
 
@@ -71,7 +77,12 @@ js/worker.js    runs the analysis off the main thread
 js/player.js    Web Audio playback + sample-accurate click
 js/timeline.js  timeline and overview canvases
 js/fileinfo.js  sample rate from WAV/AIFF/FLAC/MP3/M4A headers
+js/insights.js  swing, accents, voice phrases, best-fitting grid
+js/musicedit.js cut a song to length, render and WAV
+js/clips.js     give each shot a clip
+js/exports.js   Premiere XML and Resolve EDL
 server.py       launcher server: static files, song finder, send to Final Cut
+tools/make-mac-app.sh  builds Beatline.app
 tools/eval/     beat-tracking evaluation on real recordings
 js/markers.js   beats → marker list (pacing, bars, user edits)
 js/structure.js bars, energy sections, drop
