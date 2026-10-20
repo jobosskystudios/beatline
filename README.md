@@ -41,6 +41,8 @@ Runs on your Mac: no upload, no dependencies beyond Python 3 for the launcher.
 
 ## Open it as an app
 
+First time on a Mac: `./tools/setup-mac.sh` installs what's missing (Apple's command line tools for python3), builds **Beatline.app** in `~/Applications` and opens it.
+
 ```sh
 git clone https://github.com/jobosskystudios/beatline.git
 cd beatline

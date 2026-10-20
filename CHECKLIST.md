@@ -7,6 +7,8 @@ and Final Cut versions, and the message you saw.
 ## 0. Get the latest version
 
 - [ ] In GitHub Desktop: **Fetch origin**, then **Pull** (or `git pull` in the Beatline folder).
+- [ ] First time only, in Terminal in the Beatline folder: `./tools/setup-mac.sh`
+      (installs what's missing, builds Beatline.app and opens it).
 - [ ] In Terminal, in the Beatline folder: `./beatline.command`
       → a Beatline window opens (Chrome/Edge/Brave/Arc app window, or Safari).
 - [ ] Optional: `./tools/make-mac-app.sh` → **Beatline.app** appears in `~/Applications` with the
