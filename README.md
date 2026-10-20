@@ -42,7 +42,8 @@ Runs on your Mac: no upload, no dependencies beyond Python 3 for the launcher.
 ## Download (no Terminal needed)
 
 - **[`dist/Beatline.html`](dist/Beatline.html)**: download, double-click, done. Opens in your browser; paste the song's location in the Export tab.
-- **[`dist/Beatline-mac.zip`](dist/Beatline-mac.zip)**: unzip, drag **Beatline.app** to Applications, open it. With Apple's command line tools installed it finds your songs and opens exports in Final Cut; without them it opens the single-file version and offers the one-time install. First open: see *Opening an app from an unidentified developer* below.
+- **[`dist/Beatline.dmg`](dist/Beatline.dmg)**: open it, drag **Beatline.app** onto **Applications**.
+- **[`dist/Beatline-mac.zip`](dist/Beatline-mac.zip)**: the same app as a zip; unzip, drag **Beatline.app** to Applications, open it. With Apple's command line tools installed it finds your songs and opens exports in Final Cut; without them it opens the single-file version and offers the one-time install. First open: see *Opening an app from an unidentified developer* below.
 
 Rebuild both with `npm install && npm run build`.
 

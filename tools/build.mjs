@@ -111,6 +111,39 @@ fs.chmodSync(launcher, 0o755);
 
 // Zip with permissions kept (Finder's Archive Utility restores them).
 execFileSync('zip', ['-qry', 'Beatline-mac.zip', 'Beatline.app'], { cwd: dist });
+
+// Disk image: Beatline.app next to an Applications shortcut, drag to install.
+// Built as ISO 9660 with Rock Ridge (keeps permissions and the symlink), which
+// macOS opens like any .dmg. Needs xorriso (Linux) or hdiutil (macOS).
+const stage = path.join(dist, 'dmg');
+fs.mkdirSync(stage);
+fs.cpSync(app, path.join(stage, 'Beatline.app'), { recursive: true, verbatimSymlinks: true });
+fs.symlinkSync('/Applications', path.join(stage, 'Applications'));
+fs.writeFileSync(path.join(stage, 'Read me first.txt'), `Install Beatline
+================
+
+1. Drag Beatline.app onto the Applications folder in this window.
+2. Open Beatline from Launchpad or Spotlight.
+
+First open: macOS blocks apps that aren't from the App Store or signed by an
+identified developer. Click Done, then open System Settings > Privacy &
+Security, scroll down and click "Open Anyway" next to Beatline.
+(Or in Terminal: xattr -cr /Applications/Beatline.app)
+
+If Beatline offers to install Apple's command line tools, click Install once:
+then it finds your songs by itself and opens exports straight in Final Cut.
+`);
+const dmg = path.join(dist, 'Beatline.dmg');
+const has = (cmd) => { try { execFileSync('which', [cmd], { stdio: 'ignore' }); return true; } catch { return false; } };
+if (has('hdiutil')) {
+  execFileSync('hdiutil', ['create', '-volname', 'Beatline', '-srcfolder', stage, '-ov', '-format', 'UDZO', dmg]);
+} else if (has('xorriso')) {
+  execFileSync('xorriso', ['-as', 'mkisofs', '-quiet', '-V', 'Beatline', '-R', '-J', '-o', dmg, stage]);
+} else {
+  console.log('(no hdiutil or xorriso: skipped Beatline.dmg)');
+}
+fs.rmSync(stage, { recursive: true, force: true });
 fs.rmSync(app, { recursive: true, force: true });
+if (fs.existsSync(dmg)) console.log('dist/Beatline.dmg', (fs.statSync(dmg).size / 1024).toFixed(0), 'KB');
 console.log('dist/Beatline.html', (fs.statSync(path.join(dist, 'Beatline.html')).size / 1024).toFixed(0), 'KB');
 console.log('dist/Beatline-mac.zip', (fs.statSync(path.join(dist, 'Beatline-mac.zip')).size / 1024).toFixed(0), 'KB');
