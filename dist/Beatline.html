@@ -126,6 +126,7 @@ details > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
   background: var(--panel); border-bottom: 1px solid var(--line);
 }
 .brand { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 16px; color: var(--text); text-decoration: none; letter-spacing: -0.01em; }
+.version { font-size: 11px; font-weight: 500; color: var(--faint); letter-spacing: 0; }
 .file-btn {
   display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 260px; max-width: 460px;
   padding: 6px 12px; border: 1px dashed var(--line); border-radius: 8px; cursor: pointer; background: var(--panel-2);
@@ -279,7 +280,7 @@ main.prose { padding-block: 20px 60px; padding-left: max(16px, env(safe-area-ins
 </head>
 <body>
   <header class="appbar">
-    <a class="brand" href="index.html"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+CiAgPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9IiNmZjdhMWEiLz4KICA8ZyBzdHJva2U9IiMxYTBkMDIiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj4KICAgIDxsaW5lIHgxPSIxNCIgeTE9IjI2IiB4Mj0iMTQiIHkyPSIzOCIvPgogICAgPGxpbmUgeDE9IjIzIiB5MT0iMTgiIHgyPSIyMyIgeTI9IjQ2Ii8+CiAgICA8bGluZSB4MT0iMzIiIHkxPSIxMiIgeDI9IjMyIiB5Mj0iNTIiLz4KICAgIDxsaW5lIHgxPSI0MSIgeTE9IjIyIiB4Mj0iNDEiIHkyPSI0MiIvPgogICAgPGxpbmUgeDE9IjUwIiB5MT0iMjgiIHgyPSI1MCIgeTI9IjM2Ii8+CiAgPC9nPgo8L3N2Zz4K" alt="" width="24" height="24"> Beatline</a>
+    <a class="brand" href="index.html"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+CiAgPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9IiNmZjdhMWEiLz4KICA8ZyBzdHJva2U9IiMxYTBkMDIiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj4KICAgIDxsaW5lIHgxPSIxNCIgeTE9IjI2IiB4Mj0iMTQiIHkyPSIzOCIvPgogICAgPGxpbmUgeDE9IjIzIiB5MT0iMTgiIHgyPSIyMyIgeTI9IjQ2Ii8+CiAgICA8bGluZSB4MT0iMzIiIHkxPSIxMiIgeDI9IjMyIiB5Mj0iNTIiLz4KICAgIDxsaW5lIHgxPSI0MSIgeTE9IjIyIiB4Mj0iNDEiIHkyPSI0MiIvPgogICAgPGxpbmUgeDE9IjUwIiB5MT0iMjgiIHgyPSI1MCIgeTI9IjM2Ii8+CiAgPC9nPgo8L3N2Zz4K" alt="" width="24" height="24"> Beatline <small class="version" id="version">v1.5</small></a>
     <label class="file-btn" id="fileBtn" title="Open a song (or drop it anywhere)">
       <input type="file" id="file" accept="audio/*,.wav,.aif,.aiff,.mp3,.m4a,.aac,.flac,.ogg" hidden>
       <strong id="fileName">Open a song…</strong>

@@ -116,6 +116,7 @@ details > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
   background: var(--panel); border-bottom: 1px solid var(--line);
 }
 .brand { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 16px; color: var(--text); text-decoration: none; letter-spacing: -0.01em; }
+.version { font-size: 11px; font-weight: 500; color: var(--faint); letter-spacing: 0; }
 .file-btn {
   display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 260px; max-width: 460px;
   padding: 6px 12px; border: 1px dashed var(--line); border-radius: 8px; cursor: pointer; background: var(--panel-2);

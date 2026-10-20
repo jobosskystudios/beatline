@@ -1,5 +1,5 @@
-// Offline support: serve the app from cache, refresh the cache in the background.
-const CACHE = 'beatline-v4';
+// Offline support: always load the newest files, fall back to the cache offline.
+const CACHE = 'beatline-v5';
 const SHELL = [
   './', 'index.html', 'guide.html', 'how-it-works.html', 'faq.html', 'styles.css', 'icon.svg',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
@@ -22,17 +22,17 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin) return;
+  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/')) return;
+  // Newest files first; the cache only answers when offline.
   e.respondWith(
-    caches.open(CACHE).then(async (cache) => {
-      const cached = await cache.match(e.request, { ignoreSearch: true });
-      const fresh = fetch(e.request)
-        .then((res) => {
-          if (res.ok) cache.put(e.request, res.clone());
-          return res;
-        })
-        .catch(() => cached);
-      return cached || fresh;
-    }),
+    fetch(e.request)
+      .then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(e.request, copy));
+        }
+        return res;
+      })
+      .catch(() => caches.match(e.request, { ignoreSearch: true })),
   );
 });
