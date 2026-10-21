@@ -4,20 +4,20 @@ Everything below was tested in a browser on Linux with real songs, but not on a 
 Pro. Please go through it once and tick what works. Anything that fails: note the step, your macOS
 and Final Cut versions, and the message you saw.
 
-## 0. Get the latest version
+## 0. Install (v1.7)
 
-- [ ] In GitHub Desktop: **Fetch origin**, then **Pull** (or `git pull` in the Beatline folder).
-- [ ] First time only, in Terminal in the Beatline folder: `./tools/setup-mac.sh`
-      (installs what's missing, builds Beatline.app and opens it).
-- [ ] In Terminal, in the Beatline folder: `./beatline.command`
-      → a Beatline window opens (Chrome/Edge/Brave/Arc app window, or Safari).
-- [ ] Optional: `./tools/make-mac-app.sh` → **Beatline.app** appears in `~/Applications` with the
-      orange icon. Open it (first time: right-click › Open) → the Beatline window opens.
-- [ ] `./beatline.command stop` stops it; opening the app again starts it.
+- [ ] Quit the old Beatline and delete the old **Beatline.app** from Applications.
+- [ ] Open **Beatline.dmg**, drag **Beatline.app** onto **Applications**.
+- [ ] Open Beatline. First time: macOS blocks it → **Done** → System Settings › Privacy & Security →
+      **Open Anyway**. → A Beatline window opens; the top left says **v1.7**.
+- [ ] If macOS asks whether Beatline may access a folder (Desktop, Documents…), click **Allow**.
+- [ ] Opening Beatline again while it's open just opens another window.
 
 ## 1. Listening (use 3 songs you know well: one steady pop/EDM, one live band, one slow/rubato)
 
-- [ ] Drop a song → analysis finishes in a few seconds; the page doesn't freeze.
+- [ ] **Open a song…** → Finder's picker opens → pick the song → analysis finishes in a few seconds.
+- [ ] Export tab already says **✓ Found on your Mac** with the song's path: nothing to paste.
+- [ ] Dropping a song onto the window also works; if Beatline can't find it, **Show Beatline where the song is…** opens Finder's picker.
 - [ ] **Play** (Space) plays the song; the timecode runs.
 - [ ] **Click** (C) + play → a click on every cut, higher on bar starts, in time with the music.
 - [ ] Zoomed in, the faint beat ticks and the orange bar lines sit on the drum hits.
@@ -49,6 +49,18 @@ and Final Cut versions, and the message you saw.
 - [ ] **Download WAV** → a WAV of the shortened song that plays in QuickTime.
 - [ ] With **Use this edit** ticked, the cut plan length shows the edit length.
 
+## 3½. Clips and the shot board (Edit tab)
+
+- [ ] **Choose clips folder…** → Finder's picker → pick a folder with subfolders of MOV/MP4 clips.
+      → "N clips · X of Y shots filled · ✓ All clips linked". No path to paste.
+- [ ] The **Shot board** (under the timeline) shows every shot with a thumbnail of its clip.
+- [ ] Click a shot → it plays from that shot; the playing shot is outlined in orange.
+- [ ] **⟳** on a shot → the next clip goes in and the shot is locked (green). **🔒** unlocks it.
+- [ ] **Shuffle again** → unlocked shots change, locked ones stay. **Unlock all shots** clears them.
+- [ ] **Folders and energy**: subfolders are listed with Calm / Groove / Peak (guessed from names).
+      Set one folder to Peak → its clips land on the loud sections.
+- [ ] "Don't use the same folder twice in a row" → neighbouring shots come from different folders.
+
 ## 4. Final Cut Pro (the important part)
 
 For each export below, check: the project opens, the song **plays** (not offline/red), markers are
@@ -61,7 +73,7 @@ on the beat, and nothing is reported as an error on import.
       **Replace from Start** → the clip takes the placeholder's length.
 - [ ] **Markers** only → a gap clip carrying the markers.
 - [ ] With a **30 s music edit** applied → two song pieces back to back; the join is on a bar line.
-- [ ] **My clips** (Edit tab → Choose folder… with some MOV/MP4 clips, then Export → My clips):
+- [ ] **My clips** (Edit tab → Choose clips folder…, then Export → My clips):
       clips appear on the timeline cut to the shots, clip audio muted, song underneath.
       Check the clips play at normal speed (not slowed/sped up) and show the right part of each take.
 - [ ] Try FCPXML version **1.9** if your Final Cut is older than 10.6.

@@ -25,8 +25,8 @@
     <h2>The project opens in Final Cut but the song is silent.</h2>
     <p>Final Cut found the project but not the audio file, so the clip is offline (often red, no waveform). The FCPXML points at the song by its full path, and a browser can’t see where a file lives. Fixes:</p>
     <ul>
-      <li>Start Beatline with <code>./beatline.command</code>. It finds the song on your Mac and shows <em>✓ Found</em> in the Export tab before you export.</li>
-      <li>Or type the folder yourself. Beatline refuses to export when it can confirm the folder is wrong.</li>
+      <li>Use Beatline.app and open the song with <em>Open a song…</em>: Beatline gets the exact path from Finder and shows <em>✓ Found</em> in the Export tab.</li>
+      <li>Dropped the song instead and it wasn’t found? Click <em>Show Beatline where the song is…</em> in the Export tab.</li>
       <li>Already imported? Select the clip in Final Cut and choose <strong>File › Relink Files…</strong>.</li>
       <li>Don’t move or rename the song after exporting.</li>
     </ul>
@@ -76,11 +76,14 @@
     <h2>Can I use the markers in Premiere Pro or DaVinci Resolve?</h2>
     <p>Yes: <em>Premiere XML</em> (a sequence with the song and markers) and <em>Resolve EDL</em> (timeline markers) in the Export tab, plus marker and shot lists as CSV.</p>
 
+    <h2>It says my clips aren’t found.</h2>
+    <p>Open them with <em>Choose clips folder…</em> in Beatline.app: Finder tells Beatline exactly where they are. If you added them another way, click <em>Show Beatline where these clips are…</em> and pick their folder; Beatline matches them by name and size, including subfolders.</p>
+
     <h2>Which clips work for “My clips”?</h2>
     <p>MOV and MP4 files (ProRes, H.264, HEVC). Beatline reads each clip’s length, frame rate and size from the file itself. Shots longer than every clip stay as placeholders.</p>
 
     <h2>Can I use it offline, as an app?</h2>
-    <p>Yes. Run <code>./tools/make-mac-app.sh</code> once to get <em>Beatline.app</em> in <code>~/Applications</code>, or install it from Chrome/Edge (<em>Install Beatline</em>) or Safari (<em>File › Add to Dock</em>).</p>
+    <p>Yes: install <em>Beatline.app</em> from <em>Beatline.dmg</em>. It works offline and needs nothing else installed.</p>
   </main>
 
   <footer class="site-footer"><a href="index.html">Open Beatline →</a></footer>

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { onsetEnvelope, trackBeats, estimateTempo } from '../js/dsp.js';
 import { detectSwing, detectAccents, speechPhrases } from '../js/insights.js';
 import { planMusicEdit, mapToEdit, renderEdit, encodeWav } from '../js/musicedit.js';
-import { assignClips } from '../js/clips.js';
+import { assignClips, guessEnergy } from '../js/clips.js';
 import { buildMarkers } from '../js/markers.js';
 import { FRAME_RATES, buildFcpxml } from '../js/fcpxml.js';
 import { buildPremiereXml, buildResolveEdl } from '../js/exports.js';
@@ -133,6 +133,28 @@ test('clips: each used once before repeats, in-points inside the take on its fra
   const a = assignClips(shots, clips, { order: 'shuffle', seed: 7 }).map((x) => x.clip.name).join();
   const b = assignClips(shots, clips, { order: 'shuffle', seed: 7 }).map((x) => x.clip.name).join();
   assert.equal(a, b);
+});
+
+test('clips: energy folders, no same folder twice in a row, picked shots stay put', () => {
+  const mk = (name, group, energy) => ({ name, group, energy, duration: 10 });
+  const clips = [mk('a1', 'Calm', 'low'), mk('a2', 'Calm', 'low'), mk('b1', 'Action', 'high'), mk('b2', 'Action', 'high'), mk('c1', 'Misc', '')];
+  const sec = (level) => ({ level });
+  const shots = [sec('low'), sec('low'), sec('high'), sec('high'), sec('low')].map((section, i) => ({ index: i + 1, start: i * 48, seconds: 2, section }));
+  const p = assignClips(shots, clips, { energy: true });
+  // Untagged clips fit anywhere; tagged ones only their own level.
+  assert.deepEqual(p.map((x) => x.clip.energy || 'any'), ['low', 'low', 'high', 'high', 'any']);
+  // Without energy, folders alternate where they can.
+  const mixed = assignClips(shots.slice(0, 4), [mk('a1', 'A'), mk('a2', 'A'), mk('b1', 'B'), mk('b2', 'B')], { mixGroups: true });
+  for (let i = 1; i < mixed.length; i++) assert.notEqual(mixed[i].clip.group, mixed[i - 1].clip.group);
+  // A fixed shot keeps its clip; the rest fill around it.
+  const fixed = new Map([[96, clips[4]]]);
+  const f = assignClips(shots, clips, { energy: true, fixed });
+  const third = f.find((x) => x.shot.index === 3);
+  assert.equal(third.clip.name, 'c1');
+  assert.ok(third.fixed);
+  assert.equal(guessEnergy('B-roll wides'), 'low');
+  assert.equal(guessEnergy('Dance Action'), 'high');
+  assert.equal(guessEnergy('Day 2'), '');
 });
 
 // Minimal QuickTime file: ftyp, mdat, then moov (index at the end).

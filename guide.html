@@ -24,8 +24,7 @@
     <p class="lede">Beatline listens to the song first, then plans the cuts, then hands Final Cut Pro a project that is already timed to the music.</p>
 
     <h2>0. Start Beatline</h2>
-    <p>In Terminal, in the Beatline folder, run <code>./beatline.command</code> (or double-click it in Finder). It opens Beatline in its own window and, unlike a browser tab, can find your song and clips on disk so Final Cut links them correctly.</p>
-    <p>Want it in Applications and the Dock? Run <code>./tools/make-mac-app.sh</code> once; it builds <em>Beatline.app</em> in <code>~/Applications</code>. Beatline keeps a small server running in the background; <code>./beatline.command stop</code> stops it.</p>
+    <p>Open <em>Beatline.dmg</em>, drag <em>Beatline.app</em> onto <em>Applications</em> and open it. There’s nothing else to install. Open songs and clips with Beatline’s buttons: Finder’s own picker opens, so Beatline knows where each file lives and Final Cut links them correctly. You never paste a path.</p>
 
     <h2>1. Listen and check</h2>
     <ol class="steps">
@@ -66,13 +65,14 @@
     <h2>2½. Shorten the song, fill the shots</h2>
     <ol class="steps">
       <li><strong>Cut the song to length</strong> (Edit tab): type a length or press 15/30/60. Beatline keeps the opening, jumps on a phrase boundary to the song’s real ending, and picks the jump where the harmony matches. Press <em>Preview</em> to hear the join, <em>Download WAV</em> for the shortened song, and tick <em>Use this edit</em> so the cut plan and export follow it.</li>
-      <li><strong>Fill the shots with your clips</strong> (Edit tab): choose clips or a whole folder. Each clip is used once before any repeats, starting just after its first second (or from its middle). Then export <em>My clips</em>: a rough cut with your footage already on the beat.</li>
+      <li><strong>Fill the shots with your clips</strong> (Edit tab): <em>Choose clips folder…</em>. Each clip is used once before any repeats, starting just after its first second (or from its middle). Subfolders become groups: set each to <em>Calm</em>, <em>Groove</em> or <em>Peak</em> and Beatline puts those clips on the matching parts of the song.</li>
+      <li><strong>Work the shot board</strong> (under the timeline): every shot with its clip’s thumbnail. Click one to play it, <em>⟳</em> to try the next clip, <em>🔒</em> to keep it when you shuffle. Then export <em>My clips</em>: a rough cut with your footage already on the beat.</li>
     </ol>
 
     <h2>3. Export to Final Cut</h2>
     <ol class="steps">
       <li><strong>Pick the export</strong> (Export tab): <em>Song + markers</em>, <em>Pre-cut</em> (a placeholder per shot, already timed), <em>Markers</em> only, or <em>My clips</em> (your footage cut to the shots).</li>
-      <li><strong>Check “Song location” shows ✓ Found.</strong> Final Cut links the song by its full path; a wrong path imports a silent, offline clip. Beatline fills this in for you when started with <code>beatline.command</code>.</li>
+      <li><strong>Check “Song location” shows ✓ Found.</strong> Final Cut links the song by its full path; a wrong path imports a silent, offline clip. Opened with Beatline’s <em>Open a song…</em> button, it always is.</li>
       <li><strong>Set the frame rate</strong> to your Final Cut project’s, then <em>Export to Final Cut</em> (<kbd>⌘E</kbd>). Double-click the downloaded <code>.fcpxml</code>, or in Final Cut choose <strong>File › Import › XML…</strong>.</li>
     </ol>
 

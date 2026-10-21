@@ -10,7 +10,7 @@ import { readAudioInfo, readMovieInfo } from './fileinfo.js';
 import { parseLocation } from './paths.js';
 import { detectSwing, detectAccents, speechPhrases, thoroughGrid, strongestHits, snapToHits } from './insights.js';
 import { planMusicEdit, barChromaFromBeats, renderEdit, encodeWav } from './musicedit.js';
-import { assignClips } from './clips.js';
+import { assignClips, guessEnergy } from './clips.js';
 import { buildPremiereXml, buildResolveEdl } from './exports.js';
 
 const $ = (id) => document.getElementById(id);
@@ -21,14 +21,14 @@ const DEFAULTS = {
   mode: 'beats', density: 'bar', tight: '6', sens: '0.5', minShot: '0.5', lead: '0',
   autoLow: AUTO_DEFAULT.low, autoMid: AUTO_DEFAULT.mid, autoHigh: AUTO_DEFAULT.high,
   drumKick: true, drumSnare: true, drumHat: false,
-  minPause: '0.3', clipOrder: 'name', clipUse: 'start', muteClips: true, hitPick: 'all', hitRate: '12', snapHits: false,
+  minPause: '0.3', clipOrder: 'name', clipUse: 'start', muteClips: true, matchEnergy: true, mixFolders: true, hitPick: 'all', hitRate: '12', snapHits: false,
   fps: '23.976', rounding: 'nearest', styleSection: 'chapter', styleDown: 'standard', styleBeat: 'standard', styleAccent: 'todo',
   target: 'clip', folder: '', res: '1080p', version: '1.10', eventName: 'Beatline',
 };
 const SETTING_IDS = ['density', 'tight', 'sens', 'minShot', 'lead', 'autoLow', 'autoMid', 'autoHigh', 'fps', 'rounding',
   'styleSection', 'styleDown', 'styleBeat', 'styleAccent', 'folder', 'res', 'version', 'eventName', 'minPause', 'clipOrder', 'clipUse', 'hitPick', 'hitRate'];
 const DRUM_IDS = { drumKick: 'kick', drumSnare: 'snare', drumHat: 'hat' };
-const CHECKBOX_IDS = [...Object.keys(DRUM_IDS), 'muteClips', 'snapHits'];
+const CHECKBOX_IDS = [...Object.keys(DRUM_IDS), 'muteClips', 'snapHits', 'matchEnergy', 'mixFolders'];
 
 const state = {
   settings: { ...DEFAULTS },
@@ -69,11 +69,15 @@ const state = {
   clips: [],
   clipSeed: 1,
   clipRoot: '',
+  fixed: new Map(), // shot start frame → clip id (picked or locked on the shot board)
+  groupEnergy: {}, // clip subfolder → 'low' | 'mid' | 'high' | ''
+  thumbs: new Map(),
   range: { in: null, out: null },
   edits: { added: [], removed: new Set() },
   view: { start: 0, dur: 1 },
   taps: [],
-  server: null, // true when served by beatline.command (can locate files)
+  server: null, // true when served by Beatline's helper (can locate files)
+  native: false, // Beatline.app's helper: Finder pickers, no paths to paste
   locate: { status: 'idle', paths: [] },
 };
 
@@ -170,6 +174,20 @@ function initControls() {
   $('clipFiles').addEventListener('change', (e) => loadClips([...e.target.files]));
   $('clipFolder').addEventListener('change', (e) => loadClips([...e.target.files]));
   $('reshuffle').addEventListener('click', () => { state.clipSeed++; refresh(); toast('New clip order'); });
+  $('unlockAll').addEventListener('click', () => { state.fixed.clear(); refresh(); toast('All shots unlocked'); });
+  for (const id of ['fileBtn', 'empty']) $(id).addEventListener('click', (e) => { if (state.native) { e.preventDefault(); chooseSong(); } });
+  $('clipFolderBtn').addEventListener('click', (e) => { if (state.native) { e.preventDefault(); chooseClips('folder'); } });
+  $('clipFilesBtn').addEventListener('click', (e) => { if (state.native) { e.preventDefault(); chooseClips('clips'); } });
+  $('pickSong').addEventListener('click', chooseSong);
+  $('clipRelink').addEventListener('click', relinkClips);
+  $('groupList').addEventListener('change', (e) => {
+    const g = e.target.dataset.group;
+    if (g == null) return;
+    state.groupEnergy[g] = e.target.value;
+    for (const c of state.clips) c.energy = state.groupEnergy[c.group] ?? '';
+    refresh();
+  });
+  $('board').addEventListener('click', onBoardClick);
   $('clipsPath').addEventListener('input', renderClips);
   $('clipsPath').addEventListener('change', async () => { await verifyClips(); refresh(); });
   $('exportPremiere').addEventListener('click', exportPremiere);
@@ -215,7 +233,7 @@ function onSetting(id) {
 
 // ---------- loading & analysis ----------
 
-async function loadFile(file) {
+async function loadFile(file, knownPath = '') {
   if (!file) return;
   audioCtx ??= new AudioContext();
   if (!player) {
@@ -265,7 +283,8 @@ async function loadFile(file) {
     const rate = state.audioInfo?.sampleRate ?? buffer.sampleRate;
     $('fileMeta').textContent = `${fmtDur(buffer.duration)} · ${(rate / 1000).toFixed(1)} kHz · ${buffer.numberOfChannels} ch · ${Math.round(performance.now() - t0)} ms`;
     showWorkspace();
-    locateSong();
+    if (knownPath) setSongPath(knownPath);
+    else locateSong();
   } catch (err) {
     console.error(err);
     setBusy(null, `Analysis failed: ${err.message}. Please report this with the song’s format.`);
@@ -423,21 +442,62 @@ function barOneAtPlayhead() {
 
 // ---------- song location (for Final Cut) ----------
 
-async function api(path) {
-  const res = await fetch(path, { cache: 'no-store' });
+// The helper only answers requests that carry this header (other sites can't send it).
+const HELPER = { 'X-Beatline': '1' };
+
+async function api(path, init = {}) {
+  const res = await fetch(path, { cache: 'no-store', ...init, headers: { ...HELPER, ...init.headers } });
   if (!res.ok) throw new Error(res.status);
   return res.json();
 }
 
-async function detectServer() {
-  if (location.protocol === 'file:') { state.server = false; return; }
-  try { state.server = (await api('api/ping')).app === 'beatline'; } catch { state.server = false; }
+let detecting = null;
+function detectServer() {
+  detecting ??= (async () => {
+    if (location.protocol === 'file:') { state.server = false; return; }
+    try {
+      const ping = await api('api/ping');
+      state.server = ping.app === 'beatline';
+      state.native = state.server && (ping.features ?? []).includes('choose');
+    } catch { state.server = false; }
+    // Beatline.app's helper quits a while after its window closes; this keeps it up.
+    if (state.server) setInterval(() => api('api/ping').catch(() => {}), 30000);
+    document.body.classList.toggle('native', state.native);
+    $('folderField').hidden = $('folderHelp').hidden = state.native;
+    renderLocate();
+  })();
+  return detecting;
+}
+
+// Finder's file picker (Beatline.app): Beatline gets the song and knows its path.
+async function chooseSong() {
+  let res;
+  try { res = await api('api/choose?kind=song'); } catch { toast('Couldn’t open the Finder picker'); return; }
+  if (res.cancelled || !res.files?.length) return;
+  const { path, name, size } = res.files[0];
+  if (state.file && state.file.name === name && state.file.size === size) { setSongPath(path); toast('Song linked'); return; }
+  setBusy(`Reading ${name}…`);
+  try {
+    const r = await fetch(`api/file?path=${encodeURIComponent(path)}`, { headers: HELPER });
+    if (!r.ok) throw new Error(r.status);
+    const blob = await r.blob();
+    await loadFile(new File([blob], name, { type: blob.type }), path);
+  } catch {
+    setBusy(null, 'Couldn’t read that file.');
+  }
+}
+
+function setSongPath(path) {
+  state.locate = { status: 'found', paths: [path] };
+  $('folder').value = state.settings.folder = path;
+  saveSettings();
+  renderLocate();
 }
 
 const dirname = (p) => p.replace(/\/[^/]*$/, '') || '/';
 
 async function locateSong() {
-  if (state.server === null) await detectServer();
+  await detectServer();
   if (!state.server) {
     state.locate = { status: 'unavailable', paths: [] };
     renderLocate();
@@ -496,12 +556,13 @@ function renderLocate() {
     idle: 'Open a song first.',
     searching: '<span class="busy"><span class="spinner"></span>Looking for the song on your Mac…</span>',
     found: `<span class="ok">✓ Found on your Mac${paths.length > 1 ? ` (${paths.length} copies, using the newest)` : ''}</span>`,
-    notfound: '<span class="bad">Couldn’t find this file on your Mac.</span> Paste its location below.',
+    notfound: `<span class="bad">Couldn’t find this file on your Mac.</span> ${state.native ? 'Show Beatline where it is:' : 'Paste its location below.'}`,
     missing: '<span class="bad">✗ No song at that location.</span> Final Cut would show it offline.',
     unavailable: 'In a browser tab Beatline can’t see where the song is saved: paste its location below. (Started with <code>beatline.command</code>, it finds it for you.)',
   }[status];
   $('locateStatus').innerHTML = msg;
   $('locatePath').textContent = status === 'found' ? paths[0] : '';
+  $('pickSong').hidden = !state.native || !state.file || status === 'found' || status === 'searching';
   renderResolved();
 }
 
@@ -821,6 +882,7 @@ function exportXml() {
     const loc = songLocation();
     if (loc.error) {
       showTab('export');
+      if (state.native) { toast('Show Beatline where the song is (Export tab) so Final Cut can play it'); return; }
       toast(loc.error === 'empty' ? 'Paste where the song is on your Mac (Export tab) so Final Cut can play it' : loc.error);
       $('folder').focus();
       return;
@@ -839,20 +901,17 @@ function exportXml() {
       toast('Load your clips in the Edit tab first');
       return;
     }
-    if (!clipRootFolder()) {
-      showTab('edit');
-      toast('Paste where your clips are on your Mac (Edit tab), so Final Cut can link them');
-      $('clipsPath').focus();
-      return;
-    }
-    const missing = state.clips.filter((c) => c.missing).length;
-    if (missing) {
-      showTab('edit');
-      toast(`${missing} clips aren’t in that folder: Final Cut would show them offline. Check the clips folder.`);
-      $('clipsPath').focus();
-      return;
-    }
     placements = clipPlacements();
+    const unlinked = new Set(placements.filter((p) => !p.clip.folder || p.clip.missing).map((p) => p.clip.id)).size;
+    if (unlinked) {
+      showTab('edit');
+      if (state.native) toast(`Beatline doesn’t know where ${unlinked} clips are: click “Show Beatline where these clips are…”`);
+      else {
+        toast(clipRootFolder() ? `${unlinked} clips aren’t in that folder: Final Cut would show them offline. Check the clips folder.` : 'Paste where your clips are on your Mac (Edit tab), so Final Cut can link them');
+        $('clipsPath').focus();
+      }
+      return;
+    }
   }
   const name = songBase();
   const kind = { clip: 'markers', blocked: 'pre-cut', gap: 'markers only', assembled: 'assembled' }[s.target] + (editing() ? ` ${Math.round(state.plan.stats.lengthSec)}s edit` : '');
@@ -990,34 +1049,83 @@ function downloadEditWav() {
 
 // ---------- clips (auto-assemble) ----------
 
+const esc = (t) => String(t).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+
+// Finder's pickers (Beatline.app): the helper lists the clips with their paths.
+async function chooseClips(kind) {
+  let res;
+  try { res = await api(`api/choose?kind=${kind}`); } catch { toast('Couldn’t open the Finder picker'); return; }
+  if (res.cancelled) return;
+  if (!res.files?.length) { toast('No MOV or MP4 files there'); return; }
+  state.clipRoot = kind === 'folder' ? res.paths[0] : dirname(res.files[0].path);
+  await loadClips(res.files.map(remoteFile));
+}
+
+// A clip on disk read through the helper, in the shape readMovieInfo expects.
+function remoteFile(f) {
+  const url = `api/file?path=${encodeURIComponent(f.path)}`;
+  return {
+    name: f.name,
+    size: f.size,
+    path: f.path,
+    webkitRelativePath: f.rel,
+    slice: (a, b) => ({
+      arrayBuffer: async () => (b <= a ? new ArrayBuffer(0)
+        : (await fetch(url, { headers: { ...HELPER, Range: `bytes=${a}-${b - 1}` } })).arrayBuffer()),
+    }),
+  };
+}
+
 async function loadClips(files) {
   const videos = files.filter((f) => /\.(mov|mp4|m4v)$/i.test(f.name) && !f.name.startsWith('._'));
   if (!videos.length) { toast('No MOV or MP4 files there'); return; }
-  $('clipInfo').innerHTML = `<span class="busy"><span class="spinner"></span>Reading ${videos.length} clips…</span>`;
   const clips = [];
-  for (const f of videos) {
-    const info = await readMovieInfo(f);
-    if (!info?.video || !(info.duration > 0)) continue;
-    clips.push({
-      file: f,
-      name: f.name.replace(/\.[^.]+$/, ''),
-      fileName: f.name,
-      relPath: f.webkitRelativePath || f.name,
-      size: f.size,
-      duration: info.duration,
-      frameDuration: info.video.frameDuration,
-      width: info.video.width,
-      height: info.video.height,
-      codec: info.video.codec,
-      audio: info.audio,
-      missing: false,
-    });
-  }
+  let done = 0;
+  const progress = () => { $('clipInfo').innerHTML = `<span class="busy"><span class="spinner"></span>Reading clips… ${done} of ${videos.length}</span>`; };
+  progress();
+  // A few at a time: fast on local disks, gentle on network drives.
+  const queue = [...videos];
+  const read = async () => {
+    for (let f = queue.shift(); f; f = queue.shift()) {
+      const info = await readMovieInfo(f);
+      done++;
+      if (done % 8 === 0) progress();
+      if (!info?.video || !(info.duration > 0)) continue;
+      const relPath = f.webkitRelativePath || f.name;
+      const parts = relPath.split('/');
+      clips.push({
+        file: f.path ? null : f,
+        path: f.path ?? '',
+        name: f.name.replace(/\.[^.]+$/, ''),
+        fileName: f.name,
+        relPath,
+        group: parts.length > 2 ? parts[1] : '',
+        size: f.size,
+        duration: info.duration,
+        frameDuration: info.video.frameDuration,
+        width: info.video.width,
+        height: info.video.height,
+        codec: info.video.codec,
+        audio: info.audio,
+        missing: false,
+      });
+    }
+  };
+  await Promise.all([read(), read(), read(), read()]);
+  clips.sort((x, y) => x.relPath.localeCompare(y.relPath, undefined, { numeric: true }));
+  clips.forEach((c, i) => { c.id = i; });
   state.clips = clips;
-  await locateClips();
+  state.fixed.clear();
+  state.thumbs.clear();
+  state.groupEnergy = {};
+  for (const g of new Set(clips.map((c) => c.group))) state.groupEnergy[g] = guessEnergy(g);
+  for (const c of clips) c.energy = state.groupEnergy[c.group];
+  if (!clips.length) { $('clipInfo').innerHTML = '<span class="bad">None of those files could be read as video.</span>'; return; }
+  if (!clips.every((c) => c.path)) await locateClips();
+  renderGroups();
   showTab('edit');
-  $('reshuffle').disabled = !clips.length;
-  if (clips.length && state.settings.target !== 'assembled') {
+  $('reshuffle').disabled = false;
+  if (state.settings.target !== 'assembled') {
     state.settings.target = 'assembled';
     saveSettings();
     updateVisibility();
@@ -1025,15 +1133,14 @@ async function loadClips(files) {
   refresh();
 }
 
-// Folder of each clip: from the launcher's file finder, else the folder typed.
-// Where the clips live. With the launcher running, find one clip on disk,
-// work out the folder you picked from it, then confirm the rest are there.
+// Clips picked in the browser come without paths. With the helper, find one
+// clip on disk, work out the folder you picked from it, then confirm the rest.
 async function locateClips() {
-  if (state.server === null) await detectServer();
-  state.clipRoot = '';
+  await detectServer();
+  if (!state.native) state.clipRoot = '';
   for (const c of state.clips) c.missing = false;
   if (!state.server || !state.clips.length) return;
-  for (const c of state.clips.slice(0, 5)) {
+  for (const c of state.clips.filter((x) => !x.path).slice(0, 5)) {
     try {
       const { paths } = await api(`api/locate?name=${encodeURIComponent(c.fileName)}&size=${c.size}`);
       if (!paths.length) continue;
@@ -1044,12 +1151,32 @@ async function locateClips() {
     } catch { /* try the next clip */ }
   }
   await verifyClips();
+  // The helper has confirmed these: from now on they're linked by path.
+  if (state.native) for (const c of state.clips) if (!c.path && !c.missing && clipFolderFor(c)) c.path = `${clipFolderFor(c)}/${c.fileName}`;
 }
 
-// Mark clips that aren't where the folder says (only with the launcher).
+// "Show Beatline where these clips are…": pick the folder, match by name and size.
+async function relinkClips() {
+  let res;
+  try { res = await api('api/choose?kind=folder'); } catch { toast('Couldn’t open the Finder picker'); return; }
+  if (res.cancelled) return;
+  const byKey = new Map((res.files ?? []).map((f) => [`${f.name}|${f.size}`, f]));
+  let linked = 0;
+  for (const c of state.clips) {
+    const f = byKey.get(`${c.fileName}|${c.size}`);
+    if (f) { c.path = f.path; c.missing = false; linked++; }
+  }
+  if (linked) state.clipRoot = res.paths[0];
+  const left = state.clips.filter((c) => !c.path || c.missing).length;
+  toast(left ? `Linked ${linked} clips; ${left} still not found in that folder` : `All ${linked} clips linked`);
+  refresh();
+}
+
+// Mark clips that aren't where the folder says (only with the helper).
 async function verifyClips() {
   if (!state.server) return;
   const checks = state.clips.map(async (c) => {
+    if (c.path) { c.missing = false; return; }
     const folder = clipFolderFor(c);
     if (!folder) { c.missing = false; return; }
     try {
@@ -1069,7 +1196,7 @@ function clipSubfolder(c) {
 // path works too: Beatline works back to the folder you picked.
 function clipRootFolder() {
   const parsed = parseLocation($('clipsPath').value);
-  if (parsed.error) return state.clipRoot || '';
+  if (state.native || parsed.error) return state.clipRoot || '';
   if (!parsed.pointsToFile) return parsed.full;
   const clip = state.clips.find((c) => c.fileName === parsed.fileName);
   const sub = clip ? clipSubfolder(clip) : '';
@@ -1077,6 +1204,7 @@ function clipRootFolder() {
 }
 
 function clipFolderFor(c) {
+  if (c.path) return dirname(c.path);
   const base = clipRootFolder();
   if (!base) return '';
   const sub = clipSubfolder(c);
@@ -1086,27 +1214,161 @@ function clipFolderFor(c) {
 function clipPlacements() {
   const s = state.settings;
   const clips = state.clips.map((c) => ({ ...c, folder: clipFolderFor(c) }));
-  return assignClips(state.plan.shots, clips, { order: s.clipOrder, use: s.clipUse, seed: state.clipSeed });
+  const fixed = new Map([...state.fixed].map(([start, id]) => [start, clips[id]]));
+  return assignClips(state.plan.shots, clips, {
+    order: s.clipOrder, use: s.clipUse, seed: state.clipSeed, energy: s.matchEnergy, mixGroups: s.mixFolders, fixed,
+  });
+}
+
+function renderGroups() {
+  const counts = new Map();
+  for (const c of state.clips) counts.set(c.group, (counts.get(c.group) ?? 0) + 1);
+  $('groupField').hidden = counts.size < 2;
+  const opts = [['', 'Any'], ['low', 'Calm'], ['mid', 'Groove'], ['high', 'Peak']];
+  $('groupList').innerHTML = [...counts].map(([g, n]) => `<label class="grouprow"><span>${esc(g || 'Top folder')} <small>${n}</small></span>
+    <select data-group="${esc(g)}">${opts.map(([v, l]) => `<option value="${v}"${state.groupEnergy[g] === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>`).join('');
 }
 
 function renderClips() {
   const n = state.clips.length;
-  if (!n) return;
+  $('unlockAll').disabled = !state.fixed.size;
+  if (!n) { $('boardCard').hidden = true; return; }
+  const placements = clipPlacements();
   const root = clipRootFolder();
-  const missing = state.clips.filter((c) => c.missing).length;
-  $('clipFolderField').hidden = false;
+  const unlinked = state.clips.filter((c) => !clipFolderFor(c) || c.missing).length;
+  $('clipFolderField').hidden = state.native;
+  $('clipRelink').hidden = !state.native || !unlinked;
   $('clipsPath').placeholder = state.clipRoot || '/Users/you/Movies/Selects';
-  const filled = clipPlacements().length;
   const total = state.plan.shots.length;
   const mins = state.clips.reduce((a, c) => a + c.duration, 0) / 60;
-  const where = !root
-    ? `<span class="bad">Where are these clips on your Mac? Paste their folder below.</span>`
-    : missing
-      ? `<span class="bad">${missing} of ${n} clips aren’t in <code>${root}</code>.</span>`
-      : `<span class="ok">${state.server ? '✓ Found on your Mac:' : 'Final Cut will look in:'}</span> <code>${root}</code>`;
-  $('clipInfo').innerHTML = `<span class="${filled === total ? 'ok' : ''}">${n} clips (${mins.toFixed(1)} min) · ${filled} of ${total} shots filled</span>` +
-    (filled < total ? '<span>Some shots are longer than every clip; they stay as placeholders.</span>' : '') +
+  let where;
+  if (state.native) {
+    where = unlinked
+      ? `<span class="bad">Beatline doesn’t know where ${unlinked} of ${n} clips are.</span>`
+      : `<span class="ok">✓ All clips linked</span>${root ? ` <code>${esc(root)}</code>` : ''}`;
+  } else {
+    where = !root
+      ? '<span class="bad">Where are these clips on your Mac? Paste their folder below.</span>'
+      : unlinked
+        ? `<span class="bad">${unlinked} of ${n} clips aren’t in <code>${esc(root)}</code>.</span>`
+        : `<span class="ok">${state.server ? '✓ Found on your Mac:' : 'Final Cut will look in:'}</span> <code>${esc(root)}</code>`;
+  }
+  $('clipInfo').innerHTML = `<span class="${placements.length === total ? 'ok' : ''}">${n} clips (${mins.toFixed(1)} min) · ${placements.length} of ${total} shots filled</span>` +
+    (placements.length < total ? '<span>Some shots are longer than every clip; they stay as placeholders.</span>' : '') +
     `<span>${where}</span>`;
+  renderBoard(placements);
+}
+
+// ---------- shot board ----------
+
+function renderBoard(placements) {
+  $('boardCard').hidden = false;
+  const byShot = new Map(placements.map((p) => [p.shot.index, p]));
+  const locked = placements.filter((p) => p.fixed).length;
+  $('boardSummary').textContent = `${placements.length} of ${state.plan.shots.length} shots filled${locked ? ` · ${locked} locked` : ''}`;
+  $('board').innerHTML = state.plan.shots.map((s) => {
+    const p = byShot.get(s.index);
+    const lvl = s.section?.level;
+    const thumb = p && state.thumbs.get(p.clip.id)?.url;
+    return `<div class="shot${p ? '' : ' empty'}${p?.fixed ? ' locked' : ''}" data-i="${s.index}" data-t="${toSong(frameSec(s.start))}">
+      <div class="thumb"${p ? ` data-clip="${p.clip.id}"` : ''}${thumb ? ` style="background-image:url(${thumb})"` : ''}>${p ? '' : 'No clip long enough'}</div>
+      <div class="meta"><b>#${s.index}</b><span>${s.seconds.toFixed(1)} s</span>${lvl ? `<i class="dot" style="background:var(${LEVEL_VAR[lvl]})" title="${esc(s.section.label)}"></i>` : ''}</div>
+      ${p ? `<div class="name" title="${esc(p.clip.relPath)}">${esc(p.clip.name)}</div>
+      <div class="acts"><button data-act="next" title="Try the next clip">⟳</button><button data-act="lock" aria-pressed="${!!p.fixed}" title="${p.fixed ? 'Unlock' : 'Lock this clip'}">🔒</button></div>` : ''}
+    </div>`;
+  }).join('');
+  markPlayingShot();
+  for (const el of $('board').querySelectorAll('.thumb[data-clip]')) {
+    if (el.style.backgroundImage) continue;
+    thumbFor(state.clips[+el.dataset.clip]).then((url) => { if (url) el.style.backgroundImage = `url(${url})`; });
+  }
+}
+
+function onBoardClick(e) {
+  const tile = e.target.closest('.shot');
+  if (!tile) return;
+  const shot = state.plan.shots.find((s) => s.index === +tile.dataset.i);
+  const act = e.target.closest('button')?.dataset.act;
+  if (act) {
+    const current = clipPlacements().find((p) => p.shot === shot)?.clip;
+    if (!current) return;
+    if (act === 'lock') {
+      if (state.fixed.has(shot.start)) state.fixed.delete(shot.start);
+      else state.fixed.set(shot.start, current.id);
+    } else {
+      const fits = state.clips.filter((c) => c.duration >= shot.seconds);
+      const next = fits[(fits.findIndex((c) => c.id === current.id) + 1) % fits.length];
+      state.fixed.set(shot.start, next.id);
+    }
+    refresh();
+    return;
+  }
+  seek(+tile.dataset.t);
+  if (!player.playing) togglePlay();
+}
+
+let playingShot = -1;
+function markPlayingShot() {
+  if (!state.plan || $('boardCard').hidden || !player) return;
+  const tl = toTimeline(player.time);
+  const f = tl == null ? -1 : tl * fpsNum();
+  const shot = state.plan.shots.find((s) => f >= s.start && f < s.end);
+  const i = shot?.index ?? -1;
+  if (i === playingShot && $('board').querySelector('.playing')) return;
+  playingShot = i;
+  for (const el of $('board').querySelectorAll('.shot.playing')) el.classList.remove('playing');
+  $('board').querySelector(`.shot[data-i="${i}"]`)?.classList.add('playing');
+}
+
+// Thumbnails: Quick Look through the helper, else a frame from the video itself.
+let thumbSlots = 3;
+const thumbWaiters = [];
+async function thumbSlot(fn) {
+  if (thumbSlots === 0) await new Promise((r) => thumbWaiters.push(r));
+  thumbSlots--;
+  try { return await fn(); } finally { thumbSlots++; thumbWaiters.shift()?.(); }
+}
+
+function thumbFor(c) {
+  if (!c) return Promise.resolve(null);
+  let entry = state.thumbs.get(c.id);
+  if (!entry) {
+    entry = { url: null };
+    entry.promise = thumbSlot(async () => {
+      try {
+        if (c.path && state.native) {
+          const r = await fetch(`api/thumb?path=${encodeURIComponent(c.path)}`, { headers: HELPER });
+          if (r.ok) entry.url = URL.createObjectURL(await r.blob());
+        } else if (c.file) {
+          entry.url = await videoFrame(c.file);
+        }
+      } catch { /* no thumbnail */ }
+      return entry.url;
+    });
+    state.thumbs.set(c.id, entry);
+  }
+  return entry.promise;
+}
+
+function videoFrame(file) {
+  return new Promise((resolve) => {
+    const v = document.createElement('video');
+    const src = URL.createObjectURL(file);
+    const done = (url) => { clearTimeout(timer); URL.revokeObjectURL(src); v.removeAttribute('src'); v.load(); resolve(url); };
+    const timer = setTimeout(() => done(null), 6000);
+    v.muted = true;
+    v.preload = 'auto';
+    v.onloadedmetadata = () => { v.currentTime = Math.min(1, (v.duration || 2) / 2); };
+    v.onseeked = () => {
+      const w = 320;
+      const h = Math.round((w * (v.videoHeight || 9)) / (v.videoWidth || 16));
+      const cv = Object.assign(document.createElement('canvas'), { width: w, height: h });
+      cv.getContext('2d').drawImage(v, 0, 0, w, h);
+      cv.toBlob((b) => done(b ? URL.createObjectURL(b) : null), 'image/jpeg', 0.7);
+    };
+    v.onerror = () => done(null);
+    v.src = src;
+  });
 }
 
 // ---------- other editors ----------
@@ -1210,6 +1472,7 @@ function seek(t) {
   player.seek(t);
   updateTime();
   draw();
+  markPlayingShot();
 }
 
 function togglePlay() {
@@ -1237,6 +1500,7 @@ function tick() {
   if (t > start + dur * 0.92 || t < start) setView({ start: t - dur * 0.1, dur });
   updateTime();
   draw();
+  markPlayingShot();
   if (player.playing) requestAnimationFrame(tick);
   else syncPlayButton();
 }
@@ -1250,7 +1514,7 @@ function updateTime() {
 
 function setBusy(msg, error) {
   $('empty').hidden = false;
-  for (const id of ['timelineCard', 'analysisCard', 'planCard']) $(id).hidden = true;
+  for (const id of ['timelineCard', 'analysisCard', 'planCard', 'boardCard']) $(id).hidden = true;
   $('emptySub').innerHTML = msg ? `<span class="busy"><span class="spinner"></span>${msg}</span>` : error;
 }
 

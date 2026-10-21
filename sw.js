@@ -1,5 +1,5 @@
 // Offline support: always load the newest files, fall back to the cache offline.
-const CACHE = 'beatline-v5';
+const CACHE = 'beatline-v6';
 const SHELL = [
   './', 'index.html', 'guide.html', 'how-it-works.html', 'faq.html', 'styles.css', 'icon.svg',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',

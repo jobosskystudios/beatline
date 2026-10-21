@@ -1,7 +1,7 @@
 # Beatline
 
 Beatline **listens to a song first** (tempo, beats, bar starts, time signature, sections, the drop, key, loudness), then **plans the cut** (total cuts, shot list, energy-aware pacing, cut-downs) and **hands Final Cut Pro a project already timed to the music** (markers or a pre-cut timeline, FCPXML).
-Runs on your Mac: no upload, no dependencies beyond Python 3 for the launcher.
+Runs on your Mac: no upload, nothing else to install.
 
 | Page | What it is |
 | --- | --- |
@@ -31,21 +31,23 @@ Runs on your Mac: no upload, no dependencies beyond Python 3 for the launcher.
 - Shortest-shot limit, cut 1–2 frames early, add/remove cuts by hand, metronome click on every cut
 - **Cut the song to length** (15/30/60 s or any): keeps the opening and the real ending, jumps on a phrase where the harmony matches; preview, WAV, or use it for the cut plan and export
 - **Fill the shots with your clips** (MOV/MP4 folder): each clip once before repeats, in-points on the clip's own frames
+- **Shot board**: every shot with its clip's thumbnail; click to play it, ⟳ to try the next clip, 🔒 to keep it when you shuffle
+- **Folders → energy**: subfolders become groups (Calm / Groove / Peak, guessed from their names); calm clips go on calm sections, peak clips on the drop, and the same folder isn't used twice in a row
 
 **Export**
 - Song + markers, pre-cut timeline (one placeholder per shot, song connected), markers only, or **your clips cut to the shots**
 - Frame-exact at 23.976–60 fps; FCPXML 1.9/1.10/1.11; marker styles per type; section chapter markers
-- The launcher finds the song on your Mac (so Final Cut links it, no silent offline clips) and opens the export in Final Cut Pro directly
+- Beatline.app opens songs and clips with Finder's own pickers, so it knows their paths: Final Cut links them (no silent or offline clips, nothing to paste), and exports open in Final Cut directly
 - **Premiere Pro XML** (sequence with song + markers) and **DaVinci Resolve marker EDL**; marker and shot lists as CSV
-- **Beatline.app** for Applications and the Dock (`tools/make-mac-app.sh`)
+- **Beatline.app** for Applications and the Dock: a small native helper with the app built in
 
 ## Download (no Terminal needed)
 
 - **[`dist/Beatline.html`](dist/Beatline.html)**: download, double-click, done. Opens in your browser; paste the song's location in the Export tab.
-- **[`dist/Beatline.dmg`](dist/Beatline.dmg)**: open it, drag **Beatline.app** onto **Applications**.
-- **[`dist/Beatline-mac.zip`](dist/Beatline-mac.zip)**: the same app as a zip; unzip, drag **Beatline.app** to Applications, open it. With Apple's command line tools installed it finds your songs and opens exports in Final Cut; without them it opens the single-file version and offers the one-time install. First open: see *Opening an app from an unidentified developer* below.
+- **[`dist/Beatline.dmg`](dist/Beatline.dmg)** (recommended): open it, drag **Beatline.app** onto **Applications**, open it. Nothing else to install (no Python, no command line tools). Use **Open a song…** and **Choose clips folder…**: Finder's picker opens and Beatline knows where everything is. First open: see *Opening an app from an unidentified developer* below.
+- **[`dist/Beatline-mac.zip`](dist/Beatline-mac.zip)**: the same app as a zip.
 
-Rebuild both with `npm install && npm run build`.
+Rebuild them with `npm install && npm run build` (building the app needs [Go](https://go.dev/dl); the helper's source is `helper/main.go`).
 
 ### Opening an app from an unidentified developer
 
@@ -82,6 +84,7 @@ The tests synthesise drum loops (90–150 BPM), a waltz, a chord progression and
 ## Layout
 
 ```
+helper/main.go  Beatline.app's helper: serves the app, Finder pickers, thumbnails, send to Final Cut
 index.html, guide.html, how-it-works.html, faq.html, styles.css, icon.svg
 beatline.command  launcher: local server + app window
 manifest.webmanifest, sw.js, icons/  installable app, offline cache

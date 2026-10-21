@@ -1,8 +1,9 @@
 // Builds the double-click versions of Beatline into dist/:
 //   dist/Beatline.html      everything in one file; opens from Finder, no install
-//   dist/Beatline-mac.zip   Beatline.app (finds your songs, opens exports in Final Cut)
+//   dist/Beatline-mac.zip   Beatline.app (Finder pickers, opens exports in Final Cut)
+//   dist/Beatline.dmg       the same app, drag to Applications
 //
-//   npm install && npm run build
+//   npm install && npm run build      (needs Go for the app's helper: https://go.dev/dl)
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -45,18 +46,37 @@ html = html
 fs.writeFileSync(path.join(dist, 'Beatline.html'), html);
 
 // ---------- Beatline.app ----------
+// The app is a small native helper (helper/main.go) with the web app built in.
+// It needs nothing else installed on the Mac.
 const app = path.join(dist, 'Beatline.app');
 const res = path.join(app, 'Contents', 'Resources');
-const web = path.join(res, 'web');
-fs.mkdirSync(path.join(app, 'Contents', 'MacOS'), { recursive: true });
-fs.mkdirSync(web, { recursive: true });
-for (const f of ['index.html', 'guide.html', 'how-it-works.html', 'faq.html', 'styles.css', 'icon.svg', 'manifest.webmanifest', 'sw.js', 'server.py', 'beatline.command']) {
-  fs.copyFileSync(path.join(root, f), path.join(web, f));
+const macos = path.join(app, 'Contents', 'MacOS');
+fs.mkdirSync(macos, { recursive: true });
+fs.mkdirSync(res, { recursive: true });
+
+const helperWeb = path.join(root, 'helper', 'web');
+fs.rmSync(helperWeb, { recursive: true, force: true });
+fs.mkdirSync(helperWeb, { recursive: true });
+for (const f of ['index.html', 'guide.html', 'how-it-works.html', 'faq.html', 'styles.css', 'icon.svg', 'manifest.webmanifest', 'sw.js']) {
+  fs.copyFileSync(path.join(root, f), path.join(helperWeb, f));
 }
-fs.cpSync(path.join(root, 'js'), path.join(web, 'js'), { recursive: true });
-fs.cpSync(path.join(root, 'icons'), path.join(web, 'icons'), { recursive: true });
-fs.copyFileSync(path.join(dist, 'Beatline.html'), path.join(web, 'Beatline.html'));
-fs.chmodSync(path.join(web, 'beatline.command'), 0o755);
+fs.cpSync(path.join(root, 'js'), path.join(helperWeb, 'js'), { recursive: true });
+fs.cpSync(path.join(root, 'icons'), path.join(helperWeb, 'icons'), { recursive: true });
+
+const findGo = () => {
+  for (const g of ['go', '/usr/local/go/bin/go', '/opt/homebrew/bin/go']) {
+    try { execFileSync(g, ['version'], { stdio: 'ignore' }); return g; } catch { /* next */ }
+  }
+  throw new Error('Building Beatline.app needs Go (https://go.dev/dl).');
+};
+const go = findGo();
+for (const [goarch, arch] of [['arm64', 'arm64'], ['amd64', 'x86_64']]) {
+  execFileSync(go, ['build', '-trimpath', '-ldflags', '-s -w', '-o', path.join(macos, `beatline-${arch}`), '.'], {
+    cwd: path.join(root, 'helper'),
+    env: { ...process.env, GOOS: 'darwin', GOARCH: goarch, CGO_ENABLED: '0' },
+    stdio: 'inherit',
+  });
+}
 
 // .icns holding the 512 px PNG ('ic09'); macOS scales it for the Dock and Finder.
 const png = fs.readFileSync(path.join(root, 'icons', 'icon-512.png'));
@@ -73,8 +93,8 @@ fs.writeFileSync(path.join(app, 'Contents', 'Info.plist'), `<?xml version="1.0" 
   <key>CFBundleName</key><string>Beatline</string>
   <key>CFBundleDisplayName</key><string>Beatline</string>
   <key>CFBundleIdentifier</key><string>studio.jobossky.beatline</string>
-  <key>CFBundleVersion</key><string>1</string>
-  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleVersion</key><string>7</string>
+  <key>CFBundleShortVersionString</key><string>1.7</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>Beatline</string>
   <key>CFBundleIconFile</key><string>Beatline</string>
@@ -84,27 +104,14 @@ fs.writeFileSync(path.join(app, 'Contents', 'Info.plist'), `<?xml version="1.0" 
 </plist>
 `);
 
-const launcher = path.join(app, 'Contents', 'MacOS', 'Beatline');
+const launcher = path.join(macos, 'Beatline');
 fs.writeFileSync(launcher, `#!/bin/bash
-# Beatline.app: with Apple's command line tools (python3) installed, run the
-# full Beatline (finds songs, opens exports in Final Cut). Without them, open
-# the single-file Beatline in the browser and offer the one-time install.
-WEB="$(cd "$(dirname "$0")/../Resources/web" && pwd)"
-
-if /usr/bin/xcode-select -p >/dev/null 2>&1; then
-  nohup "$WEB/beatline.command" >/dev/null 2>&1 &
-  exit 0
-fi
-
-URL="file://$WEB/Beatline.html"
-opened=""
-for app in "Google Chrome" "Microsoft Edge" "Brave Browser" "Arc"; do
-  if open -Ra "$app" 2>/dev/null; then open -na "$app" --args --app="$URL" && opened=1 && break; fi
-done
-[ -z "$opened" ] && open "$WEB/Beatline.html"
-
-answer=$(osascript -e 'button returned of (display dialog "Beatline is open in your browser.\\n\\nFor the full version (finds your song automatically and opens exports in Final Cut), install Apple’s free command line tools once." buttons {"Later", "Install"} default button "Install" with title "Beatline")' 2>/dev/null)
-[ "$answer" = "Install" ] && /usr/bin/xcode-select --install
+# Beatline.app: start the helper for this Mac's chip. It opens Beatline's
+# window, or a new window if Beatline is already running.
+DIR="$(cd "$(dirname "$0")" && pwd)"
+BIN="$DIR/beatline-$(uname -m)"
+[ -x "$BIN" ] || BIN="$DIR/beatline-x86_64"
+nohup "$BIN" >/dev/null 2>&1 &
 exit 0
 `);
 fs.chmodSync(launcher, 0o755);
@@ -130,8 +137,10 @@ identified developer. Click Done, then open System Settings > Privacy &
 Security, scroll down and click "Open Anyway" next to Beatline.
 (Or in Terminal: xattr -cr /Applications/Beatline.app)
 
-If Beatline offers to install Apple's command line tools, click Install once:
-then it finds your songs by itself and opens exports straight in Final Cut.
+Nothing else to install. Beatline opens in its own window (Chrome, Edge or
+Brave if you have one, otherwise Safari). Open songs and clips with its
+buttons: Finder's picker opens and Beatline knows where everything is, so
+Final Cut links the song and clips by itself.
 `);
 const dmg = path.join(dist, 'Beatline.dmg');
 const has = (cmd) => { try { execFileSync('which', [cmd], { stdio: 'ignore' }); return true; } catch { return false; } };
